@@ -1,3 +1,3 @@
 # Subworld-Client
 
-Client writtend in React Native
+Client written in React Native
