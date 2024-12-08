@@ -1,3 +1,3 @@
 # Subworld-Client
 
-Client written in React Native
+Client written in NextJS
