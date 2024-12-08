@@ -1,3 +1,3 @@
 # Subworld-Client
 
-Client written in NextJS
+Client written in NextJS (PWA)
