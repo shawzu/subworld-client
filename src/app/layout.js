@@ -12,6 +12,11 @@ const geistMono = localFont({
   weight: "100 900",
 });
 
+export const viewport = {
+  maximumScale: 1,
+  userScalable: false
+}
+
 export const metadata = {
   title: "Subworld",
   description: "A decentralized messaging app",
