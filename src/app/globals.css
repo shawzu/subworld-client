@@ -6,6 +6,31 @@
 
 body {
   -webkit-tap-highlight-color: transparent;
-  background: #ffffff;
+  background: #020202;
   font-family: Arial, Helvetica, sans-serif;
 }
+
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.5s ease-out forwards;
+}
+
+.delay-100 {
+  animation-delay: 0.1s;
+}
+
+.delay-200 {
+  animation-delay: 0.2s;
+}
+
