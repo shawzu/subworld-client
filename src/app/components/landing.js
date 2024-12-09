@@ -22,13 +22,13 @@ export default function Landing() {
         <img src="Planet-logo-blue.png" alt="Logo" className="logo-class logo-class mx-auto h-[200px] " />
        
         <div className="space-y-2">
-          <h1 className="text-5xl font-bold text-[#F4F4F4] animate-fade-in">
+          <h1 className="text-3xl md:text-5xl font-bold text-[#F4F4F4] animate-fade-in">
             Decentralized.
           </h1>
-          <h1 className="text-5xl font-bold  text-[#F4F4F4] animate-fade-in delay-100">
+          <h1 className="text-3xl md:text-5xl  font-bold  text-[#F4F4F4] animate-fade-in delay-100">
           Self-hostable.
           </h1>
-          <h1 className="text-5xl font-bold text-[#F4F4F4] animate-fade-in delay-200">
+          <h1 className="text-3xl md:text-5xl  font-bold text-[#F4F4F4] animate-fade-in delay-200">
             Encrypted.
           </h1>
         </div>
