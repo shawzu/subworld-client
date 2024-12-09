@@ -21,6 +21,7 @@ export const metadata = {
   title: "Subworld",
   description: "A decentralized messaging app",
   icon: "Logo-512x512.png", // Add the path to your icon image
+  themeColor: "#020202",
   keywords: "decentralized, messaging, app, pwa",
   charset: "UTF-8",
   viewport: "width=device-width, initial-scale=1.0"
