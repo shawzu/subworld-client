@@ -5,8 +5,8 @@ export default function manifest() {
       description: 'A decentralized messaging app',
       start_url: '/',
       display: 'standalone',
-      background_color: '#ffffff',
-      theme_color: '#ffffff',
+      background_color: '#020202',
+      theme_color: '#020202',
       icons: [
         {
           src: '/Logo-192x192.png',
