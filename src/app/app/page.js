@@ -130,7 +130,7 @@ export default function App() {
             </div>
 
             {/* Message Input Form - Fixed at bottom for both mobile and desktop */}
-            <form onSubmit={handleSendMessage} className="absolute bottom-0 left-0 right-0 p-4 bg-gray-900 md:mb-0 mb-14">
+            <form onSubmit={handleSendMessage} className="absolute bottom-0 left-0 right-0 p-4 md:mb-0 mb-14">
               <div className="flex">
                 <input
                   type="text"
