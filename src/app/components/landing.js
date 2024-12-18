@@ -19,7 +19,7 @@ export default function Landing() {
 
       {/* Text Content */}
       <div className="space-y-8 text-center">
-        <img src="Planet-logo-blue.png" alt="Logo" className="logo-class logo-class mx-auto h-[200px] " />
+        <Image src="Planet-logo-blue.png" alt="Logo" className="logo-class logo-class mx-auto h-[200px] " />
        
         <div className="space-y-2">
           <h1 className="text-3xl md:text-5xl font-bold text-[#F4F4F4] animate-fade-in">

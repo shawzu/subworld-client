@@ -52,7 +52,7 @@ export default function CreateAccount() {
 
           <div className="bg-yellow-900 text-yellow-100 p-4 rounded-lg text-sm">
             <strong>Warning:</strong> Store your private key in a secure environment. 
-            Never share it with anyone. If you lose it, you'll lose access to your account.
+            Never share it with anyone. If you lose it, you&apos;ll lose access to your account.
           </div>
         </div>
 
