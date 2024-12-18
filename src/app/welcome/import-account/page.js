@@ -74,14 +74,14 @@ export default function ImportAccount() {
         <div className="bg-gray-800 p-4 rounded-lg text-sm">
           <strong className="block mb-2">Security Notice:</strong>
           <p>
-            Ensure you're on the correct Subworld website before entering your private key. 
+            Ensure you&apos;re on the correct Subworld website before entering your private key. 
             We will never ask for your private key outside of this import process.
           </p>
         </div>
 
         {/* Terms Text */}
         <p className="text-sm text-gray-500 text-center">
-          By importing your account, you agree to Subworld's Terms of Service and Privacy Policy
+          By importing your account, you agree to Subworld&apos;s Terms of Service and Privacy Policy
         </p>
       </div>
     </main>

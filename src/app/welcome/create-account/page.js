@@ -68,7 +68,7 @@ export default function CreateAccount() {
 
         {/* Terms Text */}
         <p className="text-sm text-gray-500 text-center">
-          By creating an account, you agree to Subworld's Terms of Service and Privacy Policy
+          By creating an account, you agree to Subworld&apos;s Terms of Service and Privacy Policy
         </p>
       </div>
     </main>
