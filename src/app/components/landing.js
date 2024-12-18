@@ -38,7 +38,7 @@ export default function Landing() {
       <div className="space-y-4">
         <button
           className="w-full max-w-md mx-auto h-14 text-lg bg-white hover:bg-gray-200 text-black flex items-center justify-center gap-2 rounded-2xl"
-          onClick={() => router.push('/app')}
+          onClick={() => router.push('/welcome')}
         >
         
           Start Messaging
