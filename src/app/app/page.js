@@ -5,6 +5,7 @@ import Image from 'next/image'
 import { Menu, X, Send, MessageSquare, Users, User, Settings, Plus, ArrowLeft, Search } from 'lucide-react'
 import { Upload, QrCode, Key, Trash2, Clock } from 'lucide-react'
 import ReactQRCode from 'react-qr-code';
+import { motion } from 'framer-motion'
 
 const mockConversations = [
   {
@@ -139,7 +140,7 @@ export default function App() {
     <div className="h-screen bg-gradient-to-br from-gray-900 to-black text-white flex flex-col md:flex-row overflow-hidden">
       {/* Sidebar (messages list) */}
       <div className={`w-full md:w-1/4 border-r border-gray-700 flex flex-col h-full md:h-full overflow-hidden ${(!showConversationList || activeTab !== 'messages') && 'hidden md:flex'}`}>
-        <div className="p-4 flex items-center justify-between border-b border-gray-800">
+        <div className="p-6 flex items-center justify-between border-b border-gray-800">
           <Image src="/Planet-logo-blue.png" alt="Logo" width={50} height={50} />
           <div className="hidden md:flex space-x-4">
             <button onClick={() => handleTabClick('profile')} className="hover:text-gray-300">
@@ -151,64 +152,73 @@ export default function App() {
           </div>
         </div>
 
-        <button onClick={() => { }} className="mx-4 mb-4 p-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg flex items-center justify-center transition duration-300">
+        <button onClick={() => { }} className="mx-6 my-6 p-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg flex items-center justify-center transition duration-300">
           <Plus size={20} className="mr-2" />
           Start a New Conversation
         </button>
 
         <div className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-gray-700 scrollbar-track-gray-900">
           {mockConversations.map((conv) => (
-            <div
+            <motion.div
               key={conv.id}
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
               onClick={() => handleConversationClick(conv.id)}
-              className={`p-4 hover:bg-gray-800 rounded-lg m-2 cursor-pointer transition duration-300 ${selectedConversation === conv.id ? 'bg-gray-800' : ''}`}
+              className={`p-5 hover:bg-gray-800 rounded-lg mx-4 my-3 cursor-pointer transition duration-300 ${selectedConversation === conv.id ? 'bg-gray-800' : ''}`}
             >
-              <div className="font-semibold">{conv.name}</div>
-              <div className="text-sm text-gray-400 flex justify-between">
-                <span className="truncate mr-2">{conv.lastMessage}</span>
-                <span className="flex-shrink-0">{conv.timestamp}</span>
+              <div className="flex items-center">
+                <div className="w-12 h-12 rounded-full bg-blue-500 flex items-center justify-center mr-4 flex-shrink-0">
+                  {conv.name[0].toUpperCase()}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="font-semibold text-lg truncate">{conv.name}</div>
+                  <div className="text-sm text-gray-400 flex justify-between mt-1">
+                    <span className="truncate mr-2 flex-1">{conv.lastMessage}</span>
+                    <span className="whitespace-nowrap flex-shrink-0">{conv.timestamp}</span>
+                  </div>
+                </div>
               </div>
-            </div>
+            </motion.div>
           ))}
         </div>
       </div>
 
       {/* Main content area */}
       <div className={`flex-1 flex flex-col md:h-full h-[calc(100%-56px)] relative ${showConversationList && activeTab === 'messages' && 'hidden md:flex'}`}>
-        <div className="flex-1 overflow-y-auto p-4 pb-24 scrollbar-thin scrollbar-thumb-gray-700 scrollbar-track-gray-900">
+        <div className="flex-1 overflow-y-auto p-6 pb-28 scrollbar-thin scrollbar-thumb-gray-700 scrollbar-track-gray-900">
           {activeTab === 'messages' && selectedConversation && (
             <>
-              <div className="bg-gray-900 p-4 flex items-center">
+              <div className="bg-gray-900 p-4 flex items-center rounded-lg mb-6 shadow-md">
                 <button onClick={handleBackToList} className="mr-4 md:hidden">
                   <ArrowLeft size={24} />
                 </button>
-                <div className="font-semibold">
+                <div className="font-semibold items-center justify-center  ">
                   {mockConversations.find(c => c.id === selectedConversation)?.name}
                 </div>
               </div>
 
               <div>
                 {currentMessages.map((msg) => (
-                  <div key={msg.id} className={`mb-4 ${msg.sender === 'You' ? 'text-right' : ''}`}>
-                    <div className={`inline-block p-2 px-4 rounded-2xl ${msg.sender === 'You' ? 'bg-blue-600' : 'bg-gray-800'}`}>
+                  <div key={msg.id} className={`mb-6 ${msg.sender === 'You' ? 'text-right' : ''}`}>
+                    <div className={`inline-block p-3 px-5 rounded-2xl ${msg.sender === 'You' ? 'bg-blue-600' : 'bg-gray-800'}`}>
                       {msg.content}
                     </div>
-                    <div className="text-xs text-gray-500 mt-1">{msg.timestamp}</div>
+                    <div className="text-xs text-gray-500 mt-2">{msg.timestamp}</div>
                   </div>
                 ))}
                 <div ref={messagesEndRef} />
               </div>
 
-              <form onSubmit={handleSendMessage} className="absolute bottom-0 left-0 right-0 p-4 md:mb-0 mb-14">
-                <div className="flex">
+              <form onSubmit={handleSendMessage} className="absolute bottom-0 left-0 right-0 p-6 md:mb-0 mb-16">
+                <div className="flex items-center bg-gray-800 rounded-lg overflow-hidden">
                   <input
                     type="text"
                     value={message}
                     onChange={(e) => setMessage(e.target.value)}
-                    className="flex-1 bg-gray-800 text-white rounded-l-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="flex-1 bg-transparent text-white px-5 py-4 focus:outline-none"
                     placeholder="Type a message..."
                   />
-                  <label htmlFor="file-upload" className="bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 cursor-pointer flex items-center justify-center transition duration-300">
+                  <label htmlFor="file-upload" className="px-5 py-4 hover:bg-gray-700 cursor-pointer transition duration-300">
                     <Upload size={20} />
                     <input
                       id="file-upload"
@@ -217,7 +227,7 @@ export default function App() {
                       className="hidden"
                     />
                   </label>
-                  <button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-r-lg flex items-center justify-center transition duration-300">
+                  <button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-4 flex items-center justify-center transition duration-300">
                     <Send size={20} />
                   </button>
                 </div>
@@ -227,10 +237,16 @@ export default function App() {
 
           {/* Profile Tab */}
           {activeTab === 'profile' && (
-            <div className="flex-1 p-4 overflow-y-auto flex flex-col items-center w-full">
-              <div className="w-full max-w-md mt-0 md:mt-4">
-                <h2 className="text-3xl font-bold mb-6 text-center">Profile</h2>
-                <div className="bg-gray-800 rounded-lg p-6 shadow-lg">
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 20 }}
+              transition={{ duration: 0.3 }}
+              className="flex-1 p-6 overflow-y-auto flex flex-col items-center w-full"
+            >
+              <div className="w-full max-w-md mt-0 md:mt-6">
+                <h2 className="text-3xl font-bold mb-8 text-center">Profile</h2>
+                <div className="bg-gray-800 rounded-lg p-8 shadow-lg">
                   <div className="mb-6">
                     <label className="block text-sm font-medium mb-2">Username</label>
                     <input
@@ -254,7 +270,7 @@ export default function App() {
                   </div>
                 </div>
               </div>
-            </div>
+            </motion.div>
           )}
 
           {/* Contacts Tab */}
@@ -279,52 +295,57 @@ export default function App() {
             </div>
           )}
 
-
-
-{activeTab === 'settings' && (
-  <div className="flex-1 p-4 overflow-y-auto w-full h-full">
-    <div className="flex justify-center items-start min-h-full">
-      <div className="w-full max-w-md">
-        <h2 className="text-3xl font-bold mb-6 text-center">Settings</h2>
-        <div className="bg-gray-800 rounded-lg p-6 shadow-lg">
-          <div className="mb-6">
-            <button className="w-full flex items-center justify-center bg-blue-600 hover:bg-blue-700 text-white px-4 py-3 rounded transition duration-300">
-              <Key size={20} className="mr-2" />
-              Export Private Key
-            </button>
-          </div>
-          <div className="mb-6">
-            <button className="w-full flex items-center justify-center bg-red-600 hover:bg-red-700 text-white px-4 py-3 rounded transition duration-300">
-              <Trash2 size={20} className="mr-2" />
-              Delete Account
-            </button>
-          </div>
-          <div className="mb-6">
-            <label className="block text-sm font-medium mb-2">Auto-delete messages after</label>
-            <div className="flex items-center">
-              <input
-                type="number"
-                value={autoDeletionTime}
-                onChange={(e) => setAutoDeletionTime(parseInt(e.target.value))}
-                className="w-20 bg-gray-700 text-white rounded px-3 py-2 mr-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-              <span>hours</span>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-)}
-
-
-
-
+          {activeTab === 'settings' && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 20 }}
+              transition={{ duration: 0.3 }}
+              className="flex-1 p-6 overflow-y-auto w-full h-full"
+            >
+              <div className="flex justify-center items-start min-h-full">
+                <div className="w-full max-w-md">
+                  <h2 className="text-3xl font-bold mb-6 text-center">Settings</h2>
+                  <div className="bg-gray-800 rounded-lg p-8 shadow-lg">
+                    <div className="mb-6">
+                      <button className="w-full flex items-center justify-center bg-blue-600 hover:bg-blue-700 text-white px-4 py-3 rounded transition duration-300 transform hover:scale-105">
+                        <Key size={20} className="mr-2" />
+                        Export Private Key
+                      </button>
+                    </div>
+                    <div className="mb-6">
+                      <button className="w-full flex items-center justify-center bg-red-600 hover:bg-red-700 text-white px-4 py-3 rounded transition duration-300 transform hover:scale-105">
+                        <Trash2 size={20} className="mr-2" />
+                        Delete Account
+                      </button>
+                    </div>
+                    <div className="mb-6">
+                      <label className="block text-sm font-medium mb-2">Auto-delete messages after</label>
+                      <div className="flex items-center">
+                        <input
+                          type="number"
+                          value={autoDeletionTime}
+                          onChange={(e) => setAutoDeletionTime(parseInt(e.target.value))}
+                          className="w-20 bg-gray-700 text-white rounded px-3 py-2 mr-2 focus:outline-none focus:ring-2 focus:ring-blue-500 transition duration-300"
+                        />
+                        <span>hours</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          )}
         </div>
       </div>
 
       {/* Bottom Navigation */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 flex justify-around items-center h-14 mb-2">
+      <motion.nav
+        initial={{ y: 100 }}
+        animate={{ y: 0 }}
+        transition={{ type: 'spring', stiffness: 260, damping: 20 }}
+        className="md:hidden fixed bottom-0 left-0 right-0 flex justify-around items-center h-16 bg-gray-800 border-t border-gray-700 px-4"
+      >
         <button
           onClick={() => handleTabClick('messages')}
           className={`flex flex-col items-center justify-center w-1/4 h-full ${activeTab === 'messages' ? 'text-white' : 'text-gray-500'}`}
@@ -353,9 +374,8 @@ export default function App() {
           <Settings size={20} />
           <span className="text-xs mt-1">Settings</span>
         </button>
-      </nav>
+      </motion.nav>
     </div>
   )
 }
-
 
