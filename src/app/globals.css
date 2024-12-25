@@ -12,6 +12,7 @@ body {
   font-family: Arial, Helvetica, sans-serif;
   overscroll-behavior: none;
   background-color: transparent;
+  background: linear-gradient(to bottom right, #1f2937, #000000);
 }
 
 .scrollbar-thin::-webkit-scrollbar {

@@ -25,7 +25,7 @@ export default function ImportAccount() {
   }
 
   return (
-    <main className="min-h-screen bg-black text-white flex flex-col items-center justify-center p-4 md:p-8">
+    <main className="min-h-screen  text-white flex flex-col items-center justify-center p-4 md:p-8">
       <div className="w-full max-w-4xl mx-auto space-y-12">
         {/* Logo */}
         <div className="text-center">
