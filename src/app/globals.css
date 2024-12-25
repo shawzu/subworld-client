@@ -4,17 +4,14 @@
 
 
 html {
-  background: #020202;
-  background-color: #020202;
   overscroll-behavior: none;
 }
 
 body {
   -webkit-tap-highlight-color: transparent;
-  background: #020202;
   font-family: Arial, Helvetica, sans-serif;
   overscroll-behavior: none;
-  background-color: #020202;
+  background-color: transparent;
 }
 
 .scrollbar-thin::-webkit-scrollbar {
