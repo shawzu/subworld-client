@@ -20,7 +20,7 @@ export const viewport = {
 
 export const metadata = {
   title: "Subworld",
-  description: "A decentralized messaging app",
+  description: "Decentralized messaging app",
   icon: "Logo-512x512.png", // Add the path to your icon image
   keywords: "decentralized, messaging, app, pwa",
   charset: "UTF-8"
