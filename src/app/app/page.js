@@ -137,6 +137,7 @@ export default function App() {
 
   return (
     <div className="h-screen bg-gradient-to-br from-gray-900 to-black text-white flex flex-col md:flex-row overflow-hidden">
+      {/* Sidebar (messages list) */}
       <div className={`w-full md:w-1/4 border-r border-gray-700 flex flex-col h-full md:h-full overflow-hidden ${(!showConversationList || activeTab !== 'messages') && 'hidden md:flex'}`}>
         <div className="p-4 flex items-center justify-between border-b border-gray-800">
           <Image src="/Planet-logo-blue.png" alt="Logo" width={50} height={50} />
@@ -148,10 +149,6 @@ export default function App() {
               <Settings size={20} />
             </button>
           </div>
-        </div>
-
-        <div className="p-4">
-
         </div>
 
         <button onClick={() => { }} className="mx-4 mb-4 p-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg flex items-center justify-center transition duration-300">
@@ -176,60 +173,157 @@ export default function App() {
         </div>
       </div>
 
+      {/* Main content area */}
       <div className={`flex-1 flex flex-col md:h-full h-[calc(100%-56px)] relative ${showConversationList && activeTab === 'messages' && 'hidden md:flex'}`}>
-        {activeTab === 'messages' && selectedConversation ? (
-          <>
-            <div className="bg-gray-900 p-4 flex items-center">
-              <button onClick={handleBackToList} className="mr-4 md:hidden">
-                <ArrowLeft size={24} />
-              </button>
-              <div className="font-semibold">
-                {mockConversations.find(c => c.id === selectedConversation)?.name}
-              </div>
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-4 pb-24 scrollbar-thin scrollbar-thumb-gray-700 scrollbar-track-gray-900">
-              {currentMessages.map((msg) => (
-                <div key={msg.id} className={`mb-4 ${msg.sender === 'You' ? 'text-right' : ''}`}>
-                  <div className={`inline-block p-2 px-4 rounded-2xl ${msg.sender === 'You' ? 'bg-blue-600' : 'bg-gray-800'}`}>
-                    {msg.content}
-                  </div>
-                  <div className="text-xs text-gray-500 mt-1">{msg.timestamp}</div>
-                </div>
-              ))}
-              <div ref={messagesEndRef} />
-            </div>
-
-            <form onSubmit={handleSendMessage} className="absolute bottom-0 left-0 right-0 p-4 md:mb-0 mb-14">
-              <div className="flex">
-                <input
-                  type="text"
-                  value={message}
-                  onChange={(e) => setMessage(e.target.value)}
-                  className="flex-1 bg-gray-800 text-white rounded-l-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="Type a message..."
-                />
-                <label htmlFor="file-upload" className="bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 cursor-pointer flex items-center justify-center transition duration-300">
-                  <Upload size={20} />
-                  <input
-                    id="file-upload"
-                    type="file"
-                    onChange={handleFileUpload}
-                    className="hidden"
-                  />
-                </label>
-                <button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-r-lg flex items-center justify-center transition duration-300">
-                  <Send size={20} />
+        <div className="flex-1 overflow-y-auto p-4 pb-24 scrollbar-thin scrollbar-thumb-gray-700 scrollbar-track-gray-900">
+          {activeTab === 'messages' && selectedConversation && (
+            <>
+              <div className="bg-gray-900 p-4 flex items-center">
+                <button onClick={handleBackToList} className="mr-4 md:hidden">
+                  <ArrowLeft size={24} />
                 </button>
+                <div className="font-semibold">
+                  {mockConversations.find(c => c.id === selectedConversation)?.name}
+                </div>
               </div>
-            </form>
-          </>
-        ) : (
-          <>
-          </>
-        )}
+
+              <div>
+                {currentMessages.map((msg) => (
+                  <div key={msg.id} className={`mb-4 ${msg.sender === 'You' ? 'text-right' : ''}`}>
+                    <div className={`inline-block p-2 px-4 rounded-2xl ${msg.sender === 'You' ? 'bg-blue-600' : 'bg-gray-800'}`}>
+                      {msg.content}
+                    </div>
+                    <div className="text-xs text-gray-500 mt-1">{msg.timestamp}</div>
+                  </div>
+                ))}
+                <div ref={messagesEndRef} />
+              </div>
+
+              <form onSubmit={handleSendMessage} className="absolute bottom-0 left-0 right-0 p-4 md:mb-0 mb-14">
+                <div className="flex">
+                  <input
+                    type="text"
+                    value={message}
+                    onChange={(e) => setMessage(e.target.value)}
+                    className="flex-1 bg-gray-800 text-white rounded-l-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="Type a message..."
+                  />
+                  <label htmlFor="file-upload" className="bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 cursor-pointer flex items-center justify-center transition duration-300">
+                    <Upload size={20} />
+                    <input
+                      id="file-upload"
+                      type="file"
+                      onChange={handleFileUpload}
+                      className="hidden"
+                    />
+                  </label>
+                  <button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-r-lg flex items-center justify-center transition duration-300">
+                    <Send size={20} />
+                  </button>
+                </div>
+              </form>
+            </>
+          )}
+
+          {/* Profile Tab */}
+          {activeTab === 'profile' && (
+            <div className="flex-1 p-4 overflow-y-auto flex flex-col items-center w-full">
+              <div className="w-full max-w-md mt-0 md:mt-4">
+                <h2 className="text-3xl font-bold mb-6 text-center">Profile</h2>
+                <div className="bg-gray-800 rounded-lg p-6 shadow-lg">
+                  <div className="mb-6">
+                    <label className="block text-sm font-medium mb-2">Username</label>
+                    <input
+                      type="text"
+                      value={username}
+                      onChange={(e) => setUsername(e.target.value)}
+                      className="w-full bg-gray-700 text-white rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div className="mb-6">
+                    <label className="block text-sm font-medium mb-2">Public Key</label>
+                    <div className="bg-gray-700 p-4 rounded">
+                      <p className="text-sm break-all">{publicKey}</p>
+                    </div>
+                  </div>
+                  <div className="mb-6">
+                    <h3 className="text-lg font-semibold mb-4">QR Code</h3>
+                    <div className="flex justify-center">
+                      <ReactQRCode value={publicKey} size={200} />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Contacts Tab */}
+          {activeTab === 'contacts' && (
+            <div className="flex-1 p-4 overflow-y-auto flex flex-col items-center w-full">
+              <div className="w-full max-w-md mt-0 md:mt-4">
+                <h2 className="text-3xl font-bold mb-6 text-center">Contacts</h2>
+                <div className="mb-6">
+                  <input
+                    type="text"
+                    placeholder="Search contacts..."
+                    className="w-full bg-gray-700 text-white rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                {contacts.map((contact) => (
+                  <div key={contact.id} className="mb-4 p-4 bg-gray-800 rounded-lg shadow-md">
+                    <h3 className="text-lg font-semibold">{contact.name}</h3>
+                    <p className="text-sm text-gray-400 break-all">{contact.publicKey}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+
+
+{activeTab === 'settings' && (
+  <div className="flex-1 p-4 overflow-y-auto w-full h-full">
+    <div className="flex justify-center items-start min-h-full">
+      <div className="w-full max-w-md">
+        <h2 className="text-3xl font-bold mb-6 text-center">Settings</h2>
+        <div className="bg-gray-800 rounded-lg p-6 shadow-lg">
+          <div className="mb-6">
+            <button className="w-full flex items-center justify-center bg-blue-600 hover:bg-blue-700 text-white px-4 py-3 rounded transition duration-300">
+              <Key size={20} className="mr-2" />
+              Export Private Key
+            </button>
+          </div>
+          <div className="mb-6">
+            <button className="w-full flex items-center justify-center bg-red-600 hover:bg-red-700 text-white px-4 py-3 rounded transition duration-300">
+              <Trash2 size={20} className="mr-2" />
+              Delete Account
+            </button>
+          </div>
+          <div className="mb-6">
+            <label className="block text-sm font-medium mb-2">Auto-delete messages after</label>
+            <div className="flex items-center">
+              <input
+                type="number"
+                value={autoDeletionTime}
+                onChange={(e) => setAutoDeletionTime(parseInt(e.target.value))}
+                className="w-20 bg-gray-700 text-white rounded px-3 py-2 mr-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <span>hours</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+)}
+
+
+
+
+        </div>
       </div>
 
+      {/* Bottom Navigation */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 flex justify-around items-center h-14 mb-2">
         <button
           onClick={() => handleTabClick('messages')}
@@ -260,92 +354,8 @@ export default function App() {
           <span className="text-xs mt-1">Settings</span>
         </button>
       </nav>
-      {activeTab === 'profile' && (
-        <div className="flex-1 p-4 overflow-y-auto flex flex-col items-center w-full">
-          <div className="w-full max-w-md mt-0 md:mt-4">
-            <h2 className="text-3xl font-bold mb-6 text-center">Profile</h2>
-            <div className="bg-gray-800 rounded-lg p-6 shadow-lg">
-              <div className="mb-6">
-                <label className="block text-sm font-medium mb-2">Username</label>
-                <input
-                  type="text"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  className="w-full bg-gray-700 text-white rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-              <div className="mb-6">
-                <label className="block text-sm font-medium mb-2">Public Key</label>
-                <div className="bg-gray-700 p-4 rounded">
-                  <p className="text-sm break-all">{publicKey}</p>
-                </div>
-              </div>
-              <div className="mb-6">
-                <h3 className="text-lg font-semibold mb-4">QR Code</h3>
-                <div className="flex justify-center">
-                  <ReactQRCode value={publicKey} size={200} />
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-      {activeTab === 'settings' && (
-        <div className="flex-1 p-4 overflow-y-auto w-full h-full">
-        <div className="flex justify-center items-start min-h-full">
-          <div className="w-full max-w-md">
-            <h2 className="text-3xl font-bold mb-6 text-center">Settings</h2>
-            <div className="bg-gray-800 rounded-lg p-6 shadow-lg">
-              <div className="mb-6">
-                <button className="w-full flex items-center justify-center bg-blue-600 hover:bg-blue-700 text-white px-4 py-3 rounded transition duration-300">
-                  <Key size={20} className="mr-2" />
-                  Export Private Key
-                </button>
-              </div>
-              <div className="mb-6">
-                <button className="w-full flex items-center justify-center bg-red-600 hover:bg-red-700 text-white px-4 py-3 rounded transition duration-300">
-                  <Trash2 size={20} className="mr-2" />
-                  Delete Account
-                </button>
-              </div>
-              <div className="mb-6">
-                <label className="block text-sm font-medium mb-2">Auto-delete messages after</label>
-                <div className="flex items-center">
-                  <input
-                    type="number"
-                    value={autoDeletionTime}
-                    onChange={(e) => setAutoDeletionTime(parseInt(e.target.value))}
-                    className="w-20 bg-gray-700 text-white rounded px-3 py-2 mr-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                  <span>hours</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-        </div>
-      )}
-      {activeTab === 'contacts' && (
-        <div className="flex-1 p-4 overflow-y-auto flex flex-col items-center w-full">
-          <div className="w-full max-w-md mt-0 md:mt-4">
-            <h2 className="text-3xl font-bold mb-6 text-center">Contacts</h2>
-            <div className="mb-6">
-              <input
-                type="text"
-                placeholder="Search contacts..."
-                className="w-full bg-gray-700 text-white rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-            {contacts.map((contact) => (
-              <div key={contact.id} className="mb-4 p-4 bg-gray-800 rounded-lg shadow-md">
-                <h3 className="text-lg font-semibold">{contact.name}</h3>
-                <p className="text-sm text-gray-400 break-all">{contact.publicKey}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   )
 }
+
 
