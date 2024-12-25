@@ -1,32 +1,52 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import Image from 'next/image'
 import { Menu, X, Send, MessageSquare, Users, User, Settings, Plus, ArrowLeft, Search } from 'lucide-react'
 
 const mockConversations = [
-  { id: 1, name: 'Alice', lastMessage: 'Hey, how are you?', timestamp: '10:30 AM', messages: [
-    { id: 1, sender: 'Alice', content: 'Hey, how are you?', timestamp: '10:30 AM' },
-    { id: 2, sender: 'You', content: "I'm good, thanks! How about you?", timestamp: '10:31 AM' },
-    { id: 3, sender: 'Alice', content: 'Doing great! Any plans for the weekend?', timestamp: '10:32 AM' },
-  ]},
-  { id: 2, name: 'Bob', lastMessage: 'Did you see the news?', timestamp: 'Yesterday', messages: [
-    { id: 1, sender: 'Bob', content: 'Did you see the news?', timestamp: 'Yesterday' },
-    { id: 2, sender: 'You', content: 'Not yet, what happened?', timestamp: 'Yesterday' },
-  ]},
-  { id: 3, name: 'Charlie', lastMessage: "Let's meet up soon!", timestamp: 'Monday', messages: [
-    { id: 1, sender: 'Charlie', content: "Let's meet up soon!", timestamp: 'Monday' },
-    { id: 2, sender: 'You', content: 'Sure, when works for you?', timestamp: 'Monday' },
-  ]},
+  {
+    id: 1, name: 'Alice', lastMessage: 'Hey, how are you?', timestamp: '10:30 AM', messages: [
+      { id: 1, sender: 'Alice', content: 'Hey, how are you?', timestamp: '10:30 AM' },
+      { id: 2, sender: 'You', content: "I'm good, thanks! How about you?", timestamp: '10:31 AM' },
+      { id: 3, sender: 'Alice', content: 'Doing great! Any plans for the weekend?', timestamp: '10:32 AM' },
+    ]
+  },
+  {
+    id: 2, name: 'Bob', lastMessage: 'Did you see the news?', timestamp: 'Yesterday', messages: [
+      { id: 1, sender: 'Bob', content: 'Did you see the news?', timestamp: 'Yesterday' },
+      { id: 2, sender: 'You', content: 'Not yet, what happened?', timestamp: 'Yesterday' },
+    ]
+  },
+  {
+    id: 3, name: 'Charlie', lastMessage: "Let's meet up soon!", timestamp: 'Monday', messages: [
+      { id: 1, sender: 'Charlie', content: "Let's meet up soon!", timestamp: 'Monday' },
+      { id: 2, sender: 'You', content: 'Sure, when works for you?', timestamp: 'Monday' },
+    ]
+  },
 ]
 
 export default function App() {
+  const messagesEndRef = useRef(null)
   const [selectedConversation, setSelectedConversation] = useState(null)
   const [message, setMessage] = useState('')
   const [activeTab, setActiveTab] = useState('messages')
   const [showConversationList, setShowConversationList] = useState(true)
-  const [searchQuery, setSearchQuery] = useState('')
   const [isMobile, setIsMobile] = useState(false)
+  const [currentMessages, setCurrentMessages] = useState([])
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
+  }
+
+  useEffect(() => {
+    const messages = mockConversations.find(c => c.id === selectedConversation)?.messages || []
+    setCurrentMessages(messages)
+  }, [selectedConversation])
+
+  useEffect(() => {
+    scrollToBottom()
+  }, [selectedConversation, currentMessages])
 
   useEffect(() => {
     const handleResize = () => {
@@ -45,25 +65,27 @@ export default function App() {
   const handleSendMessage = (e) => {
     e.preventDefault()
     if (!message.trim()) return
-    
+
     const newMessage = {
       id: Date.now(),
       sender: 'You',
       content: message,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     }
-    
+
     const updatedConversations = mockConversations.map(conv => {
       if (conv.id === selectedConversation) {
+        const updatedMessages = [...conv.messages, newMessage]
+        setCurrentMessages(updatedMessages)
         return {
           ...conv,
-          messages: [...conv.messages, newMessage],
+          messages: updatedMessages,
           lastMessage: message
         }
       }
       return conv
     })
-    
+
     mockConversations.splice(0, mockConversations.length, ...updatedConversations)
     setMessage('')
   }
@@ -111,26 +133,17 @@ export default function App() {
         </div>
 
         <div className="p-4">
-          <div className="relative">
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full bg-gray-800 rounded-lg px-4 py-2 pl-10"
-              placeholder="Search conversations..."
-            />
-            <Search className="absolute left-3 top-2.5 text-gray-400" size={20} />
-          </div>
+
         </div>
 
-        <button onClick={() => {}} className="mx-4 mb-4 p-2 bg-white text-black rounded-lg flex items-center justify-center">
+        <button onClick={() => { }} className="mx-4 mb-4 p-2 bg-white text-black rounded-lg flex items-center justify-center">
           <Plus size={20} className="mr-2" />
           Start a New Conversation
         </button>
 
         <div className="flex-1 overflow-y-auto">
           {mockConversations.map((conv) => (
-            <div 
+            <div
               key={conv.id}
               onClick={() => handleConversationClick(conv.id)}
               className={`p-4 hover:bg-gray-900 cursor-pointer ${selectedConversation === conv.id ? 'bg-gray-800' : ''}`}
@@ -158,14 +171,15 @@ export default function App() {
             </div>
 
             <div className="flex-1 overflow-y-auto p-4 pb-24">
-              {getCurrentMessages().map((msg) => (
+              {currentMessages.map((msg) => (
                 <div key={msg.id} className={`mb-4 ${msg.sender === 'You' ? 'text-right' : ''}`}>
-                  <div className={`inline-block p-2 rounded-lg ${msg.sender === 'You' ? 'bg-blue-600' : 'bg-gray-800'}`}>
+                  <div className={`inline-block p-2 px-4 rounded-2xl ${msg.sender === 'You' ? 'bg-blue-600' : 'bg-gray-800'}`}>
                     {msg.content}
                   </div>
                   <div className="text-xs text-gray-500 mt-1">{msg.timestamp}</div>
                 </div>
               ))}
+              <div ref={messagesEndRef} />
             </div>
 
             <form onSubmit={handleSendMessage} className="absolute bottom-0 left-0 right-0 p-4 md:mb-0 mb-14 bg-black">
