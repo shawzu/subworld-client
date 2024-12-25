@@ -188,7 +188,7 @@ export default function App() {
         <div className="flex-1 overflow-y-auto p-6 pb-28 scrollbar-thin scrollbar-thumb-gray-700 scrollbar-track-gray-900">
           {activeTab === 'messages' && selectedConversation && (
             <>
-              <div className="bg-gray-900 p-4 flex items-center rounded-lg mb-6 shadow-md">
+              <div className="bg-gray-900 p-4 flex items-center rounded-lg mb-6 ">
                 <button onClick={handleBackToList} className="mr-4 md:hidden">
                   <ArrowLeft size={24} />
                 </button>
