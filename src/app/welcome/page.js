@@ -2,45 +2,82 @@
 
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
+import { motion } from 'framer-motion'
+import { ArrowRight } from 'lucide-react'
 
 export default function Welcome() {
   const router = useRouter()
 
   return (
-    <main className="min-h-screen bg-gradient-to-br from-gray-900 to-black text-white flex flex-col items-center justify-center p-4 md:p-8">
-      <div className="w-full max-w-4xl mx-auto space-y-12">
+    <motion.main 
+      initial={{ opacity: 0 }} 
+      animate={{ opacity: 1 }} 
+      transition={{ duration: 0.5 }}
+      className="min-h-screen bg-gradient-to-br from-gray-900 to-black text-white flex flex-col items-center justify-center p-4 md:p-8"
+    >
+      <div className="w-full max-w-4xl mx-auto space-y-16">
         {/* Logo */}
-        <div className="text-center">
+        <motion.div 
+          initial={{ y: -50, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          transition={{ delay: 0.2, duration: 0.5 }}
+          className="text-center"
+        >
           <Image 
             src="/Planet-logo-blue.png" 
             alt="Logo" 
-            width={200} 
-            height={200} 
-            className="mx-auto"
+            width={250} 
+            height={250} 
+            className="mx-auto drop-shadow-2xl"
           />
-        </div>
+          
+        </motion.div>
 
         {/* Buttons */}
-        <div className="space-y-4">
-          <button
-            className="w-full max-w-md mx-auto h-14 text-lg bg-white hover:bg-gray-200 text-black flex items-center justify-center gap-2 rounded-2xl"
+        <motion.div 
+          initial={{ y: 50, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          transition={{ delay: 0.4, duration: 0.5 }}
+          className="space-y-6"
+        >
+          <motion.button
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            className="w-full max-w-md mx-auto h-14 text-lg bg-white hover:bg-gray-200 text-black flex items-center justify-center gap-2 rounded-2xl shadow-lg transition-colors duration-300"
             onClick={() => router.push('/welcome/create-account')}
           >
             Create an Account
-          </button>
+            <ArrowRight className="w-5 h-5" />
+          </motion.button>
 
-          <div className="text-center text-gray-500">OR</div>
+          <div className="flex items-center justify-center space-x-4">
+            <div className="flex-grow h-px bg-gray-600"></div>
+            <div className="text-gray-400 font-medium">OR</div>
+            <div className="flex-grow h-px bg-gray-600"></div>
+          </div>
 
-          <button
-            className="w-full max-w-md mx-auto h-14 text-lg bg-[#3c5ac6] hover:bg-[#3c5ac6]/90 text-white flex items-center justify-center gap-2 rounded-2xl"
+          <motion.button
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            className="w-full max-w-md mx-auto h-14 text-lg bg-[#3c5ac6] hover:bg-[#3c5ac6]/90 text-white flex items-center justify-center gap-2 rounded-2xl shadow-lg transition-colors duration-300"
             onClick={() => router.push('/welcome/import-account')}
           >
             Import an Account
-          </button>
-        </div>
+            <ArrowRight className="w-5 h-5" />
+          </motion.button>
+        </motion.div>
 
-     
+        {/* Footer */}
+        <motion.footer
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.6, duration: 0.5 }}
+          className="text-center text-gray-400 mt-12"
+        >
+          <p>Already have an account? <a href="/login" className="text-blue-400 hover:underline">Log in</a></p>
+        </motion.footer>
       </div>
-    </main>
+    </motion.main>
   )
 }
+

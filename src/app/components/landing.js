@@ -1,89 +1,134 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import Link from 'next/link'
 import Image from 'next/image'
-
+import { motion } from 'framer-motion'
+import { ArrowRight, X } from 'lucide-react'
 
 export default function Landing() {
-
   const router = useRouter()
-  const [showInstallPrompt, setShowInstallPrompt] = useState(true)
+  const [showInstallPrompt, setShowInstallPrompt] = useState(false)
 
+  useEffect(() => {
+    const timer = setTimeout(() => setShowInstallPrompt(true), 3000)
+    return () => clearTimeout(timer)
+  }, [])
+
+  const headingVariants = {
+    hidden: { opacity: 0, y: 20 },
+    visible: (i) => ({
+      opacity: 1,
+      y: 0,
+      transition: {
+        delay: i * 0.3,
+        duration: 0.5,
+      },
+    }),
+  }
 
   return (
-    <main className="min-h-screen bg-gradient-to-br from-gray-900 to-black  text-white flex flex-col items-center justify-center p-4 md:p-8">
-      <div className="w-full max-w-4xl mx-auto space-y-12">
+    <motion.main
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.5 }}
+      className="min-h-screen bg-gradient-to-br from-gray-900 to-black text-white flex flex-col items-center justify-center p-4 md:p-8 relative overflow-hidden"
+    >
+      {/* Background Animation */}
+      <div className="absolute inset-0 overflow-hidden">
+        
+        <div className="absolute inset-0 bg-gradient-to-t from-gray-900 to-transparent" />
+      </div>
 
-
-
-        {/* Text Content */}
-        <div className="space-y-8 text-center">
+      <div className="w-full max-w-4xl mx-auto space-y-16 relative z-10">
+        {/* Logo and Text Content */}
+        <motion.div
+          initial={{ y: -50, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          transition={{ duration: 0.5 }}
+          className="space-y-12 text-center"
+        >
           <Image
             src="/Planet-logo-blue.png"
             alt="Logo"
-            width={200}
-            height={200}
-            className="mx-auto"
+            width={250}
+            height={250}
+            className="mx-auto drop-shadow-2xl"
           />
 
-          <div className="space-y-2">
-            <h1 className="text-3xl md:text-5xl font-bold text-[#F4F4F4] animate-fade-in">
-              Decentralized.
-            </h1>
-            <h1 className="text-3xl md:text-5xl  font-bold  text-[#F4F4F4] animate-fade-in delay-100">
-              Self-hostable.
-            </h1>
-            <h1 className="text-3xl md:text-5xl  font-bold text-[#F4F4F4] animate-fade-in delay-200">
-              Encrypted.
-            </h1>
+          <div className="space-y-4">
+            {['Decentralized.', 'Self-hostable.', 'Encrypted.'].map((text, i) => (
+              <motion.h1
+                key={text}
+                custom={i}
+                initial="hidden"
+                animate="visible"
+                variants={headingVariants}
+                className="text-4xl md:text-6xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-600"
+              >
+                {text}
+              </motion.h1>
+            ))}
           </div>
-        </div>
+        </motion.div>
 
-        {/* CTA Button */}
-        <div className="space-y-4">
-          <button
-            className="w-full max-w-md mx-auto h-14 text-lg bg-white hover:bg-gray-200 text-black flex items-center justify-center gap-2 rounded-2xl"
+        {/* CTA Button and Learn More */}
+        <motion.div
+          initial={{ y: 50, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          transition={{ delay: 0.5, duration: 0.5 }}
+          className="space-y-6"
+        >
+          <motion.button
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            className="w-full max-w-md mx-auto h-14 text-lg bg-white hover:bg-gray-200 text-black flex items-center justify-center gap-2 rounded-2xl shadow-lg transition-colors duration-300"
             onClick={() => router.push('/welcome')}
           >
-
             Start Messaging
-          </button>
+            <ArrowRight className="w-5 h-5" />
+          </motion.button>
 
-          {/* Terms Text */}
-          <p className="text-sm text-gray-500 text-center ">
+          <motion.p
+            whileHover={{ scale: 1.05 }}
+            className="text-sm text-gray-400 text-center cursor-pointer hover:text-gray-200 transition-colors duration-300"
+          >
             Learn more about Subworld
-
-          </p>
-        </div>
+          </motion.p>
+        </motion.div>
       </div>
 
-
-      {showInstallPrompt && (
-        <div className="md:hidden fixed z-50 mt-24 flex h-auto flex-col rounded-[20px] border border-[#3B3B3B]/30 bg-[#0F0F0F]/90 p-6 pb-[calc(3rem+env(safe-area-inset-bottom))] shadow-[0px_4px_16px_0px_rgba(0,0,0,0.25)] backdrop-blur focus-visible:outline-none justify-start gap-8 text-left">
-          <h2 className="text-xl font-normal text-white">
-            Install the app for easier access!
-          </h2>
-          <ol className="space-y-2 text-gray-300 text-sm">
+      {/* Install Prompt */}
+      <motion.div
+        initial={{ opacity: 0, y: 100 }}
+        animate={{ opacity: showInstallPrompt ? 1 : 0, y: showInstallPrompt ? 0 : 100 }}
+        transition={{ duration: 0.5 }}
+        className="md:hidden fixed bottom-0 left-0 right-0 z-50 m-4"
+      >
+        <div className="rounded-2xl border border-gray-700 bg-gray-900/90 p-6 shadow-lg backdrop-blur">
+          <div className="flex justify-between items-start mb-4">
+            <h2 className="text-xl font-semibold text-white">Install the app for easier access!</h2>
+            <button onClick={() => setShowInstallPrompt(false)} className="text-gray-400 hover:text-white">
+              <X className="w-6 h-6" />
+            </button>
+          </div>
+          <ol className="space-y-3 text-gray-300 text-sm mb-6">
             <li className="flex items-center gap-2">
               1. Tap on the <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="1" /><circle cx="12" cy="5" r="1" /><circle cx="12" cy="19" r="1" /></svg> button in the browser menu
             </li>
-            <li>2. Scroll down and select add to homescreen</li>
+            <li>2. Scroll down and select "Add to Home Screen"</li>
             <li className="flex items-center gap-2">
-              3. Look for the Subworld icon on your homescreen
+              3. Look for the Subworld icon on your home screen
             </li>
           </ol>
           <button
             onClick={() => setShowInstallPrompt(false)}
-            className="w-full bg-[#3c5ac6] hover:bg-[#3c5ac6]/90 text-white py-3 rounded-2xl transition-colors"
+            className="w-full bg-[#3c5ac6] hover:bg-[#3c5ac6]/90 text-white py-3 rounded-xl transition-colors duration-300 shadow-md"
           >
-            Done
+            Got it!
           </button>
         </div>
-      )}
-
-
-    </main>
+      </motion.div>
+    </motion.main>
   )
 }
