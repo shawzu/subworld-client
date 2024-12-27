@@ -74,7 +74,7 @@ export default function Welcome() {
           transition={{ delay: 0.6, duration: 0.5 }}
           className="text-center text-gray-400 mt-12"
         >
-          <p>Already have an account? <a href="/login" className="text-blue-400 hover:underline">Log in</a></p>
+          <p><a className='cursor-pointer hover:text-gray-200 transition-colors duration-300'>Learn more about Subworld </a></p>
         </motion.footer>
       </div>
     </motion.main>

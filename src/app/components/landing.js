@@ -64,7 +64,7 @@ export default function Landing() {
                 initial="hidden"
                 animate="visible"
                 variants={headingVariants}
-                className="text-4xl md:text-6xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-600"
+                className="text-4xl md:text-6xl font-bold text-white"
               >
                 {text}
               </motion.h1>
