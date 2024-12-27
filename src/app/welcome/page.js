@@ -26,8 +26,8 @@ export default function Welcome() {
           <Image 
             src="/Planet-logo-blue.png" 
             alt="Logo" 
-            width={250} 
-            height={250} 
+            width={200}
+            height={200}
             className="mx-auto drop-shadow-2xl"
           />
           
