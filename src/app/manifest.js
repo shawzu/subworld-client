@@ -14,13 +14,13 @@ export default function manifest(){
     orientation: "portrait-primary",
     icons: [
       {
-        src: "/Logo-192x192.png",
+        src: "/192x192.png",
         sizes: "192x192",
         type: "image/png",
         purpose: "any maskable"
       },
       {
-        src: "/Logo-512x512.png",
+        src: "/512x512.png",
         sizes: "512x512",
         type: "image/png",
         purpose: "any maskable"
