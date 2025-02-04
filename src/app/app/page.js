@@ -237,16 +237,12 @@ export default function App() {
 
           {/* Profile Tab */}
           {activeTab === 'profile' && (
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 20 }}
-              transition={{ duration: 0.3 }}
+            <div
               className="flex-1 p-6 overflow-y-auto flex flex-col items-center w-full"
             >
-              <div className="w-full max-w-md mt-0 md:mt-6">
+              <div className="w-full max-w-md mt-0 ">
                 <h2 className="text-3xl font-bold mb-8 text-center">Profile</h2>
-                <div className="bg-gray-800 rounded-lg p-8 shadow-lg">
+                <div className="rounded-2xl border border-gray-700 bg-gray-900/90 p-6 shadow-lg backdrop-blur">
                   <div className="mb-6">
                     <label className="block text-sm font-medium mb-2">Username</label>
                     <input
@@ -270,7 +266,7 @@ export default function App() {
                   </div>
                 </div>
               </div>
-            </motion.div>
+            </div>
           )}
 
           {/* Contacts Tab */}
@@ -286,7 +282,7 @@ export default function App() {
                   />
                 </div>
                 {contacts.map((contact) => (
-                  <div key={contact.id} className="mb-4 p-4 bg-gray-800 rounded-lg shadow-md">
+                  <div key={contact.id} className="mb-4 p-4 rounded-2xl border border-gray-700 bg-gray-900/90 p-6 shadow-lg backdrop-blur">
                     <h3 className="text-lg font-semibold">{contact.name}</h3>
                     <p className="text-sm text-gray-400 break-all">{contact.publicKey}</p>
                   </div>
@@ -296,25 +292,19 @@ export default function App() {
           )}
 
           {activeTab === 'settings' && (
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 20 }}
-              transition={{ duration: 0.3 }}
-              className="flex-1 p-6 overflow-y-auto w-full h-full"
-            >
-              <div className="flex justify-center items-start min-h-full">
+           
+              <div className="p-4 flex justify-center items-start min-h-full">
                 <div className="w-full max-w-md">
                   <h2 className="text-3xl font-bold mb-6 text-center">Settings</h2>
-                  <div className="bg-gray-800 rounded-lg p-8 shadow-lg">
+                  <div className="rounded-2xl border border-gray-700 bg-gray-900/90 p-6 shadow-lg backdrop-blur">
                     <div className="mb-6">
-                      <button className="w-full flex items-center justify-center bg-blue-600 hover:bg-blue-700 text-white px-4 py-3 rounded transition duration-300 transform hover:scale-105">
+                      <button className="w-full flex items-center justify-center bg-blue-600 hover:bg-blue-700 text-white px-4 py-3 rounded ">
                         <Key size={20} className="mr-2" />
                         Export Private Key
                       </button>
                     </div>
                     <div className="mb-6">
-                      <button className="w-full flex items-center justify-center bg-red-600 hover:bg-red-700 text-white px-4 py-3 rounded transition duration-300 transform hover:scale-105">
+                      <button className="w-full flex items-center justify-center bg-red-600 hover:bg-red-700 text-white px-4 py-3 rounded ">
                         <Trash2 size={20} className="mr-2" />
                         Delete Account
                       </button>
@@ -334,7 +324,7 @@ export default function App() {
                   </div>
                 </div>
               </div>
-            </motion.div>
+ 
           )}
         </div>
       </div>
@@ -344,7 +334,7 @@ export default function App() {
         initial={{ y: 100 }}
         animate={{ y: 0 }}
         transition={{ type: 'spring', stiffness: 260, damping: 20 }}
-        className="md:hidden fixed bottom-0 left-0 right-0 flex justify-around items-center h-16 bg-gray-800 border-t border-gray-700 px-4"
+        className="md:hidden fixed bottom-0 left-0 right-0 flex justify-around items-center h-16   px-4"
       >
         <button
           onClick={() => handleTabClick('messages')}
