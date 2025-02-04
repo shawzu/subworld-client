@@ -32,13 +32,9 @@ export default function Landing() {
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ duration: 0.5 }}
-      className="min-h-screen bg-gradient-to-br from-gray-900 to-black text-white flex flex-col items-center justify-center p-4 md:p-8 relative overflow-hidden"
+      className="min-h-screen bg-[#0E0F14] text-white flex flex-col items-center justify-center p-4 md:p-8 relative overflow-hidden"
     >
-      {/* Background Animation */}
-      <div className="absolute inset-0 overflow-hidden">
-        
-        <div className="absolute inset-0 bg-gradient-to-t from-gray-900 to-transparent" />
-      </div>
+      
 
       <div className="w-full max-w-4xl mx-auto space-y-16 relative z-10">
         {/* Logo and Text Content */}
