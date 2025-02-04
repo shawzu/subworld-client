@@ -9,7 +9,7 @@ export default function manifest(){
     description: "A secure, end-to-end encrypted messaging application",
     start_url: "/",
     display: "standalone",
-    background_color: "#1F2937",
+    background_color: "#0E0F14",
     theme_color: "#3B82F6",
     orientation: "portrait-primary",
     icons: [
