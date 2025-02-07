@@ -37,7 +37,6 @@ export default function App() {
   const [showConversationList, setShowConversationList] = useState(true)
   const [isMobile, setIsMobile] = useState(false)
   const [currentMessages, setCurrentMessages] = useState([])
-  const [username, setUsername] = useState('JohnDoe')
   const [publicKey, setPublicKey] = useState('abcdef1234567890')
   const [contacts, setContacts] = useState([
     { id: 1, name: 'Alice', publicKey: 'alicepublickey123' },
@@ -188,13 +187,20 @@ export default function App() {
         <div className="flex-1 overflow-y-auto p-6 pb-28 scrollbar-thin scrollbar-thumb-gray-700 scrollbar-track-gray-900">
           {activeTab === 'messages' && selectedConversation && (
             <>
-              <div className="bg-gray-900 p-4 flex items-center rounded-lg mb-6 ">
-                <button onClick={handleBackToList} className="mr-4 md:hidden">
+              <div className="sticky top-0 bg-gradient-to-r from-gray-900 to-gray-800 p-4 flex items-center justify-between rounded-lg mb-6 border border-gray-600 shadow-lg backdrop-blur-sm">
+                <button
+                  onClick={handleBackToList}
+                  className="mr-4 md:hidden text-gray-300 hover:text-white transition-colors duration-200"
+                >
                   <ArrowLeft size={24} />
                 </button>
-                <div className="font-semibold items-center justify-center  ">
-                  {mockConversations.find(c => c.id === selectedConversation)?.name}
+                <div className="flex-grow flex items-center justify-center">
+                  <User size={20} className="mr-2 text-blue-400" />
+                  <div className="font-semibold text-lg text-white tracking-wide">
+                    {mockConversations.find((c) => c.id === selectedConversation)?.name}
+                  </div>
                 </div>
+                <div className="w-8 md:hidden" /> {/* Spacer for alignment */}
               </div>
 
               <div>
@@ -243,15 +249,7 @@ export default function App() {
               <div className="w-full max-w-md mt-0 ">
                 <h2 className="text-3xl font-bold mb-8 text-center">Profile</h2>
                 <div className="rounded-2xl border border-gray-700 bg-gray-900/90 p-6 shadow-lg backdrop-blur">
-                  <div className="mb-6">
-                    <label className="block text-sm font-medium mb-2">Username</label>
-                    <input
-                      type="text"
-                      value={username}
-                      onChange={(e) => setUsername(e.target.value)}
-                      className="w-full bg-gray-700 text-white rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
+
                   <div className="mb-6">
                     <label className="block text-sm font-medium mb-2">Public Key</label>
                     <div className="bg-gray-700 p-4 rounded">
@@ -292,39 +290,39 @@ export default function App() {
           )}
 
           {activeTab === 'settings' && (
-           
-              <div className="p-4 flex justify-center items-start min-h-full">
-                <div className="w-full max-w-md">
-                  <h2 className="text-3xl font-bold mb-6 text-center">Settings</h2>
-                  <div className="rounded-2xl border border-gray-700 bg-gray-900/90 p-6 shadow-lg backdrop-blur">
-                    <div className="mb-6">
-                      <button className="w-full flex items-center justify-center bg-blue-600 hover:bg-blue-700 text-white px-4 py-3 rounded ">
-                        <Key size={20} className="mr-2" />
-                        Export Private Key
-                      </button>
-                    </div>
-                    <div className="mb-6">
-                      <button className="w-full flex items-center justify-center bg-red-600 hover:bg-red-700 text-white px-4 py-3 rounded ">
-                        <Trash2 size={20} className="mr-2" />
-                        Delete Account
-                      </button>
-                    </div>
-                    <div className="mb-6">
-                      <label className="block text-sm font-medium mb-2">Auto-delete messages after</label>
-                      <div className="flex items-center">
-                        <input
-                          type="number"
-                          value={autoDeletionTime}
-                          onChange={(e) => setAutoDeletionTime(parseInt(e.target.value))}
-                          className="w-20 bg-gray-700 text-white rounded px-3 py-2 mr-2 focus:outline-none focus:ring-2 focus:ring-blue-500 transition duration-300"
-                        />
-                        <span>hours</span>
-                      </div>
+
+            <div className="p-4 flex justify-center items-start min-h-full">
+              <div className="w-full max-w-md">
+                <h2 className="text-3xl font-bold mb-6 text-center">Settings</h2>
+                <div className="rounded-2xl border border-gray-700 bg-gray-900/90 p-6 shadow-lg backdrop-blur">
+                  <div className="mb-6">
+                    <button className="w-full flex items-center justify-center bg-blue-600 hover:bg-blue-700 text-white px-4 py-3 rounded ">
+                      <Key size={20} className="mr-2" />
+                      Export Private Key
+                    </button>
+                  </div>
+                  <div className="mb-6">
+                    <button className="w-full flex items-center justify-center bg-red-600 hover:bg-red-700 text-white px-4 py-3 rounded ">
+                      <Trash2 size={20} className="mr-2" />
+                      Delete Account
+                    </button>
+                  </div>
+                  <div className="mb-6">
+                    <label className="block text-sm font-medium mb-2">Auto-delete messages after</label>
+                    <div className="flex items-center">
+                      <input
+                        type="number"
+                        value={autoDeletionTime}
+                        onChange={(e) => setAutoDeletionTime(parseInt(e.target.value))}
+                        className="w-20 bg-gray-700 text-white rounded px-3 py-2 mr-2 focus:outline-none focus:ring-2 focus:ring-blue-500 transition duration-300"
+                      />
+                      <span>hours</span>
                     </div>
                   </div>
                 </div>
               </div>
- 
+            </div>
+
           )}
         </div>
       </div>
