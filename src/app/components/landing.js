@@ -9,12 +9,20 @@ import { ArrowRight, X } from 'lucide-react'
 export default function Landing() {
   const router = useRouter()
   const [showInstallPrompt, setShowInstallPrompt] = useState(false)
+  const [isIOS, setIsIOS] = useState(false)
 
   useEffect(() => {
-    const timer = setTimeout(() => setShowInstallPrompt(true), 3000)
+    const timer = setTimeout(() => setShowInstallPrompt(true), 1000)
+
+    // Check if the device is running iOS
+    const checkIsIOS = () => {
+      const userAgent = window.navigator.userAgent.toLowerCase()
+      return /iphone|ipad|ipod/.test(userAgent)
+    }
+    setIsIOS(checkIsIOS())
+
     return () => clearTimeout(timer)
   }, [])
-
   const headingVariants = {
     hidden: { opacity: 0, y: 20 },
     visible: (i) => ({
@@ -34,7 +42,7 @@ export default function Landing() {
       transition={{ duration: 0.5 }}
       className="min-h-screen bg-[#0E0F14] text-white flex flex-col items-center justify-center p-4 md:p-8 relative overflow-hidden"
     >
-      
+
 
       <div className="w-full max-w-4xl mx-auto space-y-16 relative z-10">
         {/* Logo and Text Content */}
@@ -109,13 +117,38 @@ export default function Landing() {
             </button>
           </div>
           <ol className="space-y-3 text-gray-300 text-sm mb-6">
-            <li className="flex items-center gap-2">
-              1. Tap on the <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="1" /><circle cx="12" cy="5" r="1" /><circle cx="12" cy="19" r="1" /></svg> button in the browser menu
-            </li>
-            <li>2. Scroll down and select "Add to Home Screen"</li>
-            <li className="flex items-center gap-2">
-              3. Look for the Subworld icon on your home screen
-            </li>
+            {isIOS ? (
+              <>
+                <li className="flex items-center gap-2">
+                  1. Tap the <Share className="h-5 w-5" /> Share button
+                </li>
+                <li>2. Scroll down and tap "Add to Home Screen"</li>
+                <li>3. Tap "Add" in the top right corner</li>
+              </>
+            ) : (
+              <>
+                <li className="flex items-center gap-2">
+                  1. Tap the menu icon{" "}
+                  <svg
+                    className="h-5 w-5"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <circle cx="12" cy="12" r="1" />
+                    <circle cx="12" cy="5" r="1" />
+                    <circle cx="12" cy="19" r="1" />
+                  </svg>{" "}
+                  in your browser
+                </li>
+                <li>2. Tap "Add to Home screen"</li>
+                <li>3. Tap "Add" to confirm</li>
+              </>
+            )}
+            <li className="flex items-center gap-2">4. Look for the Subworld icon on your home screen</li>
           </ol>
           <button
             onClick={() => setShowInstallPrompt(false)}

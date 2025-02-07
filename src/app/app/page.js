@@ -187,7 +187,7 @@ export default function App() {
         <div className="flex-1 overflow-y-auto p-6 pb-28 scrollbar-thin scrollbar-thumb-gray-700 scrollbar-track-gray-900">
           {activeTab === 'messages' && selectedConversation && (
             <>
-              <div className="sticky top-0 bg-gradient-to-r from-gray-900 to-gray-800 p-4 flex items-center justify-between rounded-lg mb-6 border border-gray-600 shadow-lg backdrop-blur-sm">
+              <div className="sticky top-0 bg-gradient-to-b from-gray-900 to-gray-800 p-4 flex items-center justify-between rounded-lg mb-6 border border-gray-600 shadow-lg backdrop-blur-sm">
                 <button
                   onClick={handleBackToList}
                   className="mr-4 md:hidden text-gray-300 hover:text-white transition-colors duration-200"
