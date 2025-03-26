@@ -38,11 +38,7 @@ export default function App() {
   const [isMobile, setIsMobile] = useState(false)
   const [currentMessages, setCurrentMessages] = useState([])
   const [publicKey, setPublicKey] = useState('abcdef1234567890')
-  const [contacts, setContacts] = useState([
-    { id: 1, name: 'Alice', publicKey: 'alicepublickey123' },
-    { id: 2, name: 'Bob', publicKey: 'bobpublickey456' },
-    { id: 3, name: 'Charlie', publicKey: 'charliepublickey789' },
-  ])
+
   const [autoDeletionTime, setAutoDeletionTime] = useState(24) // in hours
 
   const scrollToBottom = () => {
@@ -267,27 +263,7 @@ export default function App() {
             </div>
           )}
 
-          {/* Contacts Tab */}
-          {activeTab === 'contacts' && (
-            <div className="flex-1 p-4 overflow-y-auto flex flex-col items-center w-full">
-              <div className="w-full max-w-md mt-0 md:mt-4">
-                <h2 className="text-3xl font-bold mb-6 text-center">Contacts</h2>
-                <div className="mb-6">
-                  <input
-                    type="text"
-                    placeholder="Search contacts..."
-                    className="w-full bg-gray-700 text-white rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                {contacts.map((contact) => (
-                  <div key={contact.id} className="mb-4 p-4 rounded-2xl border border-gray-700 bg-gray-900/90 p-6 shadow-lg backdrop-blur">
-                    <h3 className="text-lg font-semibold">{contact.name}</h3>
-                    <p className="text-sm text-gray-400 break-all">{contact.publicKey}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+          
 
           {activeTab === 'settings' && (
 
@@ -341,13 +317,7 @@ export default function App() {
           <MessageSquare size={20} />
           <span className="text-xs mt-1">Messages</span>
         </button>
-        <button
-          onClick={() => handleTabClick('contacts')}
-          className={`flex flex-col items-center justify-center w-1/4 h-full ${activeTab === 'contacts' ? 'text-white' : 'text-gray-500'}`}
-        >
-          <Users size={20} />
-          <span className="text-xs mt-1">Contacts</span>
-        </button>
+        
         <button
           onClick={() => handleTabClick('profile')}
           className={`flex flex-col items-center justify-center w-1/4 h-full ${activeTab === 'profile' ? 'text-white' : 'text-gray-500'}`}
