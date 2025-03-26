@@ -5,12 +5,14 @@ import Image from 'next/image'
 import {
   Menu, X, Send, MessageSquare, Users, User, Settings,
   Plus, ArrowLeft, Search, Upload, QrCode, Key, Trash2, Clock,
-  RefreshCw, AlertCircle
+  RefreshCw, AlertCircle, Server, Wifi, WifiOff
 } from 'lucide-react'
 import ReactQRCode from 'react-qr-code'
 import { motion } from 'framer-motion'
 import { KeyGuard } from '../components/KeyGuard'
 import NewConversationModal from '../components/NewConversationModal'
+import NodeSelector from '../components/NodeSelector'
+import NetworkStatus from '../components/NetworkStatus'
 import subworldNetwork from '../../utils/SubworldNetworkService'
 import contactStore from '../../utils/ContactStore'
 import conversationManager from '../../utils/ConversationManager'
@@ -32,6 +34,7 @@ export default function App() {
   const [conversations, setConversations] = useState([])
   const [hasNewMessages, setHasNewMessages] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
+  const [selectedNode, setSelectedNode] = useState(null)
 
   // Scroll to bottom of message list
   const scrollToBottom = () => {
@@ -70,6 +73,10 @@ export default function App() {
         // Initialize network service
         await subworldNetwork.initialize();
 
+        // Get the current node
+        const currentNode = subworldNetwork.getCurrentNode();
+        setSelectedNode(currentNode);
+
         // Initialize other services (with checks)
         if (conversationManager) {
           await conversationManager.initialize(keyPair.publicKeyDisplay);
@@ -91,218 +98,247 @@ export default function App() {
 
     // Clean up on unmount
     return () => {
-      conversationManager.cleanup()
+      if (conversationManager && conversationManager.cleanup) {
+        conversationManager.cleanup();
+      }
     }
   }, [])
 
+  // Handler for node selection
+  const handleNodeSelect = (node) => {
+    if (subworldNetwork) {
+      subworldNetwork.setCurrentNode(node);
+      setSelectedNode(node);
+
+      // Refresh data with the new node
+      fetchNewMessages().catch(err => {
+        console.error('Error fetching messages with new node:', err);
+      });
+    }
+  }
+
   // Load conversations from the conversation manager
   const loadConversations = () => {
-    const conversationPreviews = conversationManager.getConversationPreviews()
-    setConversations(conversationPreviews)
+    if (!conversationManager) return;
+
+    const conversationPreviews = conversationManager.getConversationPreviews();
+    setConversations(conversationPreviews);
   }
 
   // Fetch new messages from the network
   const fetchNewMessages = async () => {
     try {
-      setRefreshing(true)
-      const newMessageCount = await conversationManager.fetchNewMessages()
+      if (!subworldNetwork || !conversationManager) return;
+
+      setRefreshing(true);
+      const newMessageCount = await conversationManager.fetchNewMessages();
 
       // Update conversation list
-      loadConversations()
+      loadConversations();
 
       // Update current conversation messages if needed
       if (selectedConversation) {
-        const conversation = conversationManager.getConversation(selectedConversation)
+        const conversation = conversationManager.getConversation(selectedConversation);
         if (conversation) {
-          setCurrentMessages(conversation.messages)
+          setCurrentMessages(conversation.messages.sort(
+            (a, b) => new Date(a.timestamp) - new Date(b.timestamp)
+          ));
         }
       }
 
       // Flag if there are new messages
       if (newMessageCount > 0) {
-        setHasNewMessages(true)
-        setTimeout(() => setHasNewMessages(false), 3000)
+        setHasNewMessages(true);
+        setTimeout(() => setHasNewMessages(false), 3000);
       }
 
-      setRefreshing(false)
+      setRefreshing(false);
     } catch (error) {
-      console.error('Error fetching messages:', error)
-      setRefreshing(false)
+      console.error('Error fetching messages:', error);
+      setRefreshing(false);
     }
   }
 
   // Handle screen resizing
   useEffect(() => {
     const handleResize = () => {
-      const mobile = window.innerWidth < 768
-      setIsMobile(mobile)
+      const mobile = window.innerWidth < 768;
+      setIsMobile(mobile);
       if (!mobile) {
-        setShowConversationList(true)
+        setShowConversationList(true);
       }
     }
 
-    handleResize()
-    window.addEventListener('resize', handleResize)
-    return () => window.removeEventListener('resize', handleResize)
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
   }, [])
 
   // Update current messages when selected conversation changes
   useEffect(() => {
+    if (!conversationManager) return;
+
     if (selectedConversation) {
-      const conversation = conversationManager.getConversation(selectedConversation)
+      const conversation = conversationManager.getConversation(selectedConversation);
       if (conversation) {
         setCurrentMessages(conversation.messages.sort(
           (a, b) => new Date(a.timestamp) - new Date(b.timestamp)
-        ))
-        conversationManager.markConversationAsRead(selectedConversation)
-        loadConversations() // Refresh conversation list to update unread counts
+        ));
+        conversationManager.markConversationAsRead(selectedConversation);
+        loadConversations(); // Refresh conversation list to update unread counts
       } else {
-        setCurrentMessages([])
+        setCurrentMessages([]);
       }
     } else {
-      setCurrentMessages([])
+      setCurrentMessages([]);
     }
   }, [selectedConversation])
 
   // Scroll to bottom when messages change
   useEffect(() => {
-    scrollToBottom()
+    scrollToBottom();
   }, [currentMessages])
 
   // Send a message
   const handleSendMessage = async (e) => {
-    e.preventDefault()
-    if (!message.trim() || !selectedConversation) return
+    e.preventDefault();
+    if (!message.trim() || !selectedConversation || !conversationManager) return;
 
     try {
       // Send the message using conversation manager
-      await conversationManager.sendMessage(selectedConversation, message.trim())
+      await conversationManager.sendMessage(selectedConversation, message.trim());
 
       // Reload conversation data
-      const conversation = conversationManager.getConversation(selectedConversation)
+      const conversation = conversationManager.getConversation(selectedConversation);
       if (conversation) {
         setCurrentMessages(conversation.messages.sort(
           (a, b) => new Date(a.timestamp) - new Date(b.timestamp)
-        ))
+        ));
       }
 
       // Refresh the conversation list
-      loadConversations()
+      loadConversations();
 
       // Clear the input
-      setMessage('')
+      setMessage('');
     } catch (error) {
-      console.error('Failed to send message:', error)
-      alert('Failed to send message. Please try again.')
+      console.error('Failed to send message:', error);
+      alert('Failed to send message. Please try again.');
     }
   }
 
   // Select a conversation
   const handleConversationClick = (contactPublicKey) => {
-    setSelectedConversation(contactPublicKey)
-    setActiveTab('messages')
+    setSelectedConversation(contactPublicKey);
+    setActiveTab('messages');
     if (isMobile) {
-      setShowConversationList(false)
+      setShowConversationList(false);
     }
   }
 
   // Go back to conversation list (mobile)
   const handleBackToList = () => {
-    setShowConversationList(true)
+    setShowConversationList(true);
   }
 
   // Change active tab
   const handleTabClick = (tab) => {
-    setActiveTab(tab)
+    setActiveTab(tab);
     if (tab !== 'messages') {
-      setSelectedConversation(null)
+      setSelectedConversation(null);
     }
     if (isMobile) {
-      setShowConversationList(tab === 'messages')
+      setShowConversationList(tab === 'messages');
     }
   }
 
   // Handle file upload
   const handleFileUpload = (e) => {
-    const file = e.target.files[0]
+    const file = e.target.files[0];
     if (file) {
       // Handle file upload logic here
-      console.log('File uploaded:', file.name)
+      console.log('File uploaded:', file.name);
       // For future implementation: encrypt and send file
-      alert('File sharing will be implemented in a future update.')
+      alert('File sharing will be implemented in a future update.');
     }
   }
 
   // Handle creating a new conversation
   const handleNewConversation = () => {
-    setShowNewConversationModal(true)
+    setShowNewConversationModal(true);
   }
 
   // Handle submitting the new conversation form
   const handleNewConversationSubmit = async (data) => {
+    if (!conversationManager || !contactStore) {
+      alert('Service not available. Please try again later.');
+      return;
+    }
+
     try {
       // Create a new conversation
-      conversationManager.createOrUpdateConversation(data.recipientKey, data.alias)
+      conversationManager.createOrUpdateConversation(data.recipientKey, data.alias);
 
       // Save contact info
-      contactStore.saveContact(data.recipientKey, data.alias)
+      contactStore.saveContact(data.recipientKey, data.alias);
 
       // Close the modal
-      setShowNewConversationModal(false)
+      setShowNewConversationModal(false);
 
       // Switch to the new conversation
-      setSelectedConversation(data.recipientKey)
+      setSelectedConversation(data.recipientKey);
 
       // Send initial message if provided
       if (data.initialMessage) {
-        await conversationManager.sendMessage(data.recipientKey, data.initialMessage)
+        await conversationManager.sendMessage(data.recipientKey, data.initialMessage);
 
         // Reload conversation data
-        const conversation = conversationManager.getConversation(data.recipientKey)
+        const conversation = conversationManager.getConversation(data.recipientKey);
         if (conversation) {
           setCurrentMessages(conversation.messages.sort(
             (a, b) => new Date(a.timestamp) - new Date(b.timestamp)
-          ))
+          ));
         }
       }
 
       // Refresh the conversation list
-      loadConversations()
+      loadConversations();
 
       // Switch to mobile view if needed
       if (isMobile) {
-        setShowConversationList(false)
+        setShowConversationList(false);
       }
     } catch (error) {
-      console.error('Error creating conversation:', error)
-      alert('Failed to create conversation. Please try again.')
+      console.error('Error creating conversation:', error);
+      alert('Failed to create conversation. Please try again.');
     }
   }
 
   // Get the name to display for a contact
   const getContactName = (publicKeyStr) => {
-    const contact = contactStore.getContact(publicKeyStr)
-    return contact?.alias || publicKeyStr
+    if (!contactStore) return publicKeyStr;
+    const contact = contactStore.getContact(publicKeyStr);
+    return contact?.alias || publicKeyStr;
   }
 
   // Format timestamp for display
   const formatMessageTime = (timestamp) => {
-    const messageDate = new Date(timestamp)
-    const now = new Date()
-    const diffDays = Math.floor((now - messageDate) / (1000 * 60 * 60 * 24))
+    const messageDate = new Date(timestamp);
+    const now = new Date();
+    const diffDays = Math.floor((now - messageDate) / (1000 * 60 * 60 * 24));
 
     if (diffDays === 0) {
       // Today - show time
-      return messageDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      return messageDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     } else if (diffDays === 1) {
       // Yesterday
-      return 'Yesterday'
+      return 'Yesterday';
     } else if (diffDays < 7) {
       // Within a week - show day name
-      return messageDate.toLocaleDateString([], { weekday: 'long' })
+      return messageDate.toLocaleDateString([], { weekday: 'long' });
     } else {
       // Older - show date
-      return messageDate.toLocaleDateString([], { month: 'short', day: 'numeric' })
+      return messageDate.toLocaleDateString([], { month: 'short', day: 'numeric' });
     }
   }
 
@@ -312,7 +348,10 @@ export default function App() {
         {/* Sidebar (conversations list) */}
         <div className={`w-full md:w-1/4 border-r border-gray-700 flex flex-col h-full md:h-full overflow-hidden ${(!showConversationList || activeTab !== 'messages') && 'hidden md:flex'}`}>
           <div className="p-6 flex items-center justify-between border-b border-gray-800">
-            <Image src="/Planet-logo-blue.png" alt="Logo" width={50} height={50} />
+            <div className="flex items-center space-x-3">
+              <Image src="/Planet-logo-blue.png" alt="Logo" width={50} height={50} />
+              <NetworkStatus selectedNode={selectedNode} />
+            </div>
             <div className="hidden md:flex space-x-4">
               <button onClick={() => handleTabClick('profile')} className="hover:text-gray-300">
                 <User size={20} />
@@ -379,7 +418,7 @@ export default function App() {
                   >
                     <div className="flex items-center">
                       <div className="w-12 h-12 rounded-full bg-blue-500 flex items-center justify-center mr-4 flex-shrink-0">
-                        {conv.contactName[0].toUpperCase()}
+                        {conv.contactName && conv.contactName[0].toUpperCase()}
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="font-semibold text-lg truncate flex items-center">
@@ -537,118 +576,194 @@ export default function App() {
             )}
 
             {/* Settings Tab */}
-{activeTab === 'settings' && (
-  <div className="flex-1 p-6 overflow-y-auto">
-    <div className="max-w-md mx-auto">
-      <h2 className="text-2xl font-bold mb-6 text-center text-white">Settings</h2>
-      
-      <div className="space-y-6">
-        <div className="rounded-2xl border border-gray-700 bg-gray-800/80 p-6 backdrop-blur-sm shadow-lg">
-          <h3 className="text-lg font-semibold mb-4 text-blue-400">Security</h3>
-          
-          <div className="space-y-4">
-            <button 
-              className="w-full flex items-center justify-between p-4 bg-gray-900 hover:bg-gray-700 text-white rounded-lg transition-colors border border-gray-700"
-              onClick={() => {
-                // Copy private key to clipboard
-                const keyPair = LocalKeyStorageManager.getKeyPair()
-                navigator.clipboard.writeText(keyPair.privateKey)
-                alert('Private key copied to clipboard. Store it securely!')
-              }}
-            >
-              <div className="flex items-center">
-                <Key size={18} className="text-blue-400 mr-3" />
-                <span>Export Private Key</span>
+            {activeTab === 'settings' && (
+              <div className="flex-1 p-6 overflow-y-auto">
+                <div className="max-w-md mx-auto">
+                  <h2 className="text-2xl font-bold mb-6 text-center text-white">Settings</h2>
+
+                  <div className="space-y-6">
+                    <div className="rounded-2xl border border-gray-700 bg-gray-800/80 p-6 backdrop-blur-sm shadow-lg">
+                      <h3 className="text-lg font-semibold mb-4 text-blue-400">Security</h3>
+
+                      <div className="space-y-4">
+                        <button
+                          className="w-full flex items-center justify-between p-4 bg-gray-900 hover:bg-gray-700 text-white rounded-lg transition-colors border border-gray-700"
+                          onClick={() => {
+                            // Copy private key to clipboard
+                            const keyPair = LocalKeyStorageManager.getKeyPair();
+                            navigator.clipboard.writeText(keyPair.privateKey);
+                            alert('Private key copied to clipboard. Store it securely!');
+                          }}
+                        >
+                          <div className="flex items-center">
+                            <Key size={18} className="text-blue-400 mr-3" />
+                            <span>Export Private Key</span>
+                          </div>
+                          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="9 18 15 12 9 6"></polyline>
+                          </svg>
+                        </button>
+
+                        <button
+                          className="w-full flex items-center justify-between p-4 bg-gray-900 hover:bg-blue-900/40 text-white rounded-lg transition-colors border border-gray-700"
+                          onClick={() => {
+                            if (confirm('Are you sure you want to log out? Make sure you have exported your private key first.')) {
+                              // Clear all storage related to the app
+                              localStorage.removeItem('subworld_private_key');
+                              localStorage.removeItem('subworld_public_key_display');
+                              localStorage.removeItem('subworld_private_key_display');
+                              localStorage.removeItem('subworld_public_key_hash');
+                              localStorage.removeItem('subworld_preferred_node');
+                              localStorage.removeItem('subworld_contacts');
+                              localStorage.removeItem('subworld_conversations');
+
+                              // Redirect to welcome page
+                              window.location.href = '/';
+                            }
+                          }}
+                        >
+                          <div className="flex items-center">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-blue-400 mr-3">
+                              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                              <polyline points="16 17 21 12 16 7"></polyline>
+                              <line x1="21" y1="12" x2="9" y2="12"></line>
+                            </svg>
+                            <span>Log Out</span>
+                          </div>
+                          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="9 18 15 12 9 6"></polyline>
+                          </svg>
+                        </button>
+
+                        <button
+                          className="w-full flex items-center justify-between p-4 bg-gray-900 hover:bg-red-900/40 text-white rounded-lg transition-colors border border-gray-700"
+                          onClick={() => {
+                            if (confirm('Are you sure you want to delete your account? This action cannot be undone.')) {
+                              // Delete key pair and all other data
+                              LocalKeyStorageManager.deleteKeyPair();
+
+                              // Clear all other storage
+                              localStorage.removeItem('subworld_preferred_node');
+                              localStorage.removeItem('subworld_contacts');
+                              localStorage.removeItem('subworld_conversations');
+
+                              // Redirect to home page
+                              window.location.href = '/';
+                            }
+                          }}
+                        >
+                          <div className="flex items-center">
+                            <Trash2 size={18} className="text-red-400 mr-3" />
+                            <span>Delete Account</span>
+                          </div>
+                          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="9 18 15 12 9 6"></polyline>
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-gray-700 bg-gray-800/80 p-6 backdrop-blur-sm shadow-lg">
+                      <h3 className="text-lg font-semibold mb-4 text-blue-400 flex items-center">
+                        <Server size={18} className="mr-2" />
+                        Network Node
+                      </h3>
+
+                      <div className="bg-gray-900 p-4 rounded-lg border border-gray-700">
+                        <div className="mb-4">
+                          <p className="text-sm text-gray-400 mb-3">
+                            Current node:
+                          </p>
+                          <div className="flex items-center gap-2 p-3 bg-gray-800 rounded-lg border border-gray-700">
+                            <div className={`w-3 h-3 rounded-full ${selectedNode?.isOnline ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                            <div>
+                              <div className="font-medium">{selectedNode?.name || 'Default Node'}</div>
+                              <div className="text-xs text-gray-400">{selectedNode?.address}</div>
+                              {selectedNode?.latency && (
+                                <div className="text-xs text-gray-500 mt-1">Latency: {selectedNode?.latency}ms</div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="mt-4">
+                          <p className="text-sm text-gray-400 mb-3">Available nodes:</p>
+                          <NodeSelector
+                            onNodeSelect={handleNodeSelect}
+                            currentNode={selectedNode}
+                          />
+                        </div>
+
+                        <p className="mt-4 text-xs text-gray-400">
+                          Choose which network node to connect to. Selecting a node closer to your location may improve performance.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-gray-700 bg-gray-800/80 p-6 backdrop-blur-sm shadow-lg">
+                      <h3 className="text-lg font-semibold mb-4 text-blue-400 flex items-center">
+                        <Clock size={18} className="mr-2" />
+                        Message Retention
+                      </h3>
+
+                      <div className="bg-gray-900 p-4 rounded-lg border border-gray-700">
+                        <label className="block text-sm font-medium mb-2 text-gray-300">
+                          Auto-delete messages after
+                        </label>
+                        <div className="flex items-center">
+                          <input
+                            type="range"
+                            min="1"
+                            max="168"
+                            value={autoDeletionTime}
+                            onChange={(e) => setAutoDeletionTime(parseInt(e.target.value))}
+                            className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500 mr-3"
+                          />
+                          <div className="flex items-center bg-gray-700 px-3 py-1 rounded-lg">
+                            <input
+                              type="number"
+                              min="1"
+                              max="168"
+                              value={autoDeletionTime}
+                              onChange={(e) => setAutoDeletionTime(parseInt(e.target.value))}
+                              className="w-16 bg-transparent text-white text-center focus:outline-none"
+                            />
+                            <span className="text-gray-400 ml-1">hours</span>
+                          </div>
+                        </div>
+                        <p className="mt-2 text-xs text-gray-400">
+                          {autoDeletionTime < 24
+                            ? `Messages will be deleted after ${autoDeletionTime} hour${autoDeletionTime === 1 ? '' : 's'}`
+                            : `Messages will be deleted after ${Math.floor(autoDeletionTime / 24)} day${Math.floor(autoDeletionTime / 24) === 1 ? '' : 's'} and ${autoDeletionTime % 24} hour${autoDeletionTime % 24 === 1 ? '' : 's'}`
+                          }
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-gray-700 bg-gray-800/80 p-6 backdrop-blur-sm shadow-lg">
+                      <h3 className="text-lg font-semibold mb-4 text-blue-400">App Information</h3>
+
+                      <div className="space-y-3">
+                        <div className="flex justify-between items-center text-sm">
+                          <span className="text-gray-400">Version</span>
+                          <span className="text-white">1.0.0</span>
+                        </div>
+
+                        <div className="flex justify-between items-center text-sm">
+                          <span className="text-gray-400">Built with</span>
+                          <span className="text-white">Next.js & Subworld</span>
+                        </div>
+
+                        <div className="flex justify-between items-center text-sm">
+                          <span className="text-gray-400">Encryption</span>
+                          <span className="text-white">End-to-End</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="9 18 15 12 9 6"></polyline>
-              </svg>
-            </button>
-            
-            <button 
-              className="w-full flex items-center justify-between p-4 bg-gray-900 hover:bg-red-900/40 text-white rounded-lg transition-colors border border-gray-700"
-              onClick={() => {
-                if (confirm('Are you sure you want to delete your account? This action cannot be undone.')) {
-                  LocalKeyStorageManager.deleteKeyPair()
-                  window.location.href = '/'
-                }
-              }}
-            >
-              <div className="flex items-center">
-                <Trash2 size={18} className="text-red-400 mr-3" />
-                <span>Delete Account</span>
-              </div>
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="9 18 15 12 9 6"></polyline>
-              </svg>
-            </button>
-          </div>
-        </div>
-        
-        <div className="rounded-2xl border border-gray-700 bg-gray-800/80 p-6 backdrop-blur-sm shadow-lg">
-          <h3 className="text-lg font-semibold mb-4 text-blue-400 flex items-center">
-            <Clock size={18} className="mr-2" />
-            Message Retention
-          </h3>
-          
-          <div className="bg-gray-900 p-4 rounded-lg border border-gray-700">
-            <label className="block text-sm font-medium mb-2 text-gray-300">
-              Auto-delete messages after
-            </label>
-            <div className="flex items-center">
-              <input
-                type="range"
-                min="1"
-                max="168"
-                value={autoDeletionTime}
-                onChange={(e) => setAutoDeletionTime(parseInt(e.target.value))}
-                className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500 mr-3"
-              />
-              <div className="flex items-center bg-gray-700 px-3 py-1 rounded-lg">
-                <input
-                  type="number"
-                  min="1"
-                  max="168"
-                  value={autoDeletionTime}
-                  onChange={(e) => setAutoDeletionTime(parseInt(e.target.value))}
-                  className="w-16 bg-transparent text-white text-center focus:outline-none"
-                />
-                <span className="text-gray-400 ml-1">hours</span>
-              </div>
-            </div>
-            <p className="mt-2 text-xs text-gray-400">
-              {autoDeletionTime < 24 
-                ? `Messages will be deleted after ${autoDeletionTime} hour${autoDeletionTime === 1 ? '' : 's'}`
-                : `Messages will be deleted after ${Math.floor(autoDeletionTime / 24)} day${Math.floor(autoDeletionTime / 24) === 1 ? '' : 's'} and ${autoDeletionTime % 24} hour${autoDeletionTime % 24 === 1 ? '' : 's'}`
-              }
-            </p>
-          </div>
-        </div>
-        
-        <div className="rounded-2xl border border-gray-700 bg-gray-800/80 p-6 backdrop-blur-sm shadow-lg">
-          <h3 className="text-lg font-semibold mb-4 text-blue-400">App Information</h3>
-          
-          <div className="space-y-3">
-            <div className="flex justify-between items-center text-sm">
-              <span className="text-gray-400">Version</span>
-              <span className="text-white">1.0.0</span>
-            </div>
-            
-            <div className="flex justify-between items-center text-sm">
-              <span className="text-gray-400">Built with</span>
-              <span className="text-white">Next.js & Subworld</span>
-            </div>
-            
-            <div className="flex justify-between items-center text-sm">
-              <span className="text-gray-400">Encryption</span>
-              <span className="text-white">End-to-End</span>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-)}
+            )}
           </div>
         </div>
 
@@ -661,7 +776,7 @@ export default function App() {
         >
           <button
             onClick={() => handleTabClick('messages')}
-            className={`flex flex-col items-center justify-center w-1/4 h-full ${activeTab === 'messages' ? 'text-white' : 'text-gray-500'}`}
+            className={`flex flex-col items-center justify-center w-1/3 h-full ${activeTab === 'messages' ? 'text-white' : 'text-gray-500'}`}
           >
             <MessageSquare size={20} />
             <span className="text-xs mt-1">Messages</span>
@@ -669,14 +784,15 @@ export default function App() {
 
           <button
             onClick={() => handleTabClick('profile')}
-            className={`flex flex-col items-center justify-center w-1/4 h-full ${activeTab === 'profile' ? 'text-white' : 'text-gray-500'}`}
+            className={`flex flex-col items-center justify-center w-1/3 h-full ${activeTab === 'profile' ? 'text-white' : 'text-gray-500'}`}
           >
             <User size={20} />
             <span className="text-xs mt-1">Profile</span>
           </button>
+
           <button
             onClick={() => handleTabClick('settings')}
-            className={`flex flex-col items-center justify-center w-1/4 h-full ${activeTab === 'settings' ? 'text-white' : 'text-gray-500'}`}
+            className={`flex flex-col items-center justify-center w-1/3 h-full ${activeTab === 'settings' ? 'text-white' : 'text-gray-500'}`}
           >
             <Settings size={20} />
             <span className="text-xs mt-1">Settings</span>

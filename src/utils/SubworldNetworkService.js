@@ -4,15 +4,24 @@ import LocalKeyStorageManager from './LocalKeyStorageManager'
 
 class SubworldNetworkService {
   constructor() {
-    // Base URL for the Subworld DHT network API
-    this.apiBaseUrl = process.env.NEXT_PUBLIC_SUBWORLD_API_URL || 'https://api.subworld.network'
+    // Default bootstrap server
+    this.bootstrapServer = process.env.NEXT_PUBLIC_BOOTSTRAP_SERVER || 'https://bootstrap.subworld.network'
+    
+    // Default node if none is selected
+    this.defaultNode = process.env.NEXT_PUBLIC_DEFAULT_NODE || 'https://node1.subworld.network'
+    
+    // The currently selected node
+    this.currentNode = null
     
     // Check for environment (development/production)
     this.isDevelopment = process.env.NODE_ENV === 'development'
+    
+    // Flag to use mock data in development
+    this._useMockData = this.isDevelopment
   }
   
   /**
-   * Initialize the service by loading keys
+   * Initialize the service by loading keys and node preference
    */
   async initialize() {
     const keyPair = LocalKeyStorageManager.getKeyPair()
@@ -22,10 +31,107 @@ class SubworldNetworkService {
     
     this.keyPair = keyPair
     
+    // Load the preferred node from localStorage
+    this.loadPreferredNode()
+    
     // For development, initialize mock data if needed
     if (this.isDevelopment) {
       this._initializeMockData()
     }
+  }
+  
+  /**
+   * Get available nodes from the bootstrap server
+   * @returns {Promise<Array>} - Array of node objects
+   */
+  async getAvailableNodes() {
+    try {
+      if (this.isDevelopment && this._useMockData) {
+        return this._mockGetNodes()
+      }
+      
+      const response = await fetch(`${this.bootstrapServer}/peers`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      })
+      
+      if (!response.ok) {
+        throw new Error(`Failed to fetch nodes: ${response.status}`)
+      }
+      
+      const data = await response.json()
+      return data.peers
+    } catch (error) {
+      console.error('Error fetching nodes:', error)
+      
+      // Return default nodes as fallback
+      return [
+        { 
+          id: 'local', 
+          name: 'Local Node', 
+          address: 'http://localhost:8001', 
+          description: 'Your local node (if running)'
+        },
+        { 
+          id: 'main1', 
+          name: 'Subworld Main 1', 
+          address: 'https://node1.subworld.network', 
+          description: 'Primary node'
+        },
+        { 
+          id: 'main2', 
+          name: 'Subworld Main 2', 
+          address: 'https://node2.subworld.network', 
+          description: 'Secondary node'
+        }
+      ]
+    }
+  }
+  
+  /**
+   * Load the preferred node from localStorage
+   */
+  loadPreferredNode() {
+    try {
+      const savedNode = localStorage.getItem('subworld_preferred_node')
+      if (savedNode) {
+        this.currentNode = JSON.parse(savedNode)
+      } else {
+        // Use default node if none is saved
+        this.currentNode = {
+          name: 'Default Node',
+          address: this.defaultNode
+        }
+      }
+      
+      console.log('Using node:', this.currentNode)
+    } catch (error) {
+      console.error('Error loading preferred node:', error)
+      this.currentNode = {
+        name: 'Default Node',
+        address: this.defaultNode
+      }
+    }
+  }
+  
+  /**
+   * Set the current node to use for API calls
+   * @param {Object} node - Node object with address and other details
+   */
+  setCurrentNode(node) {
+    this.currentNode = node
+    localStorage.setItem('subworld_preferred_node', JSON.stringify(node))
+    console.log('Node set to:', node)
+  }
+  
+  /**
+   * Get the current node
+   * @returns {Object} - Current node object
+   */
+  getCurrentNode() {
+    return this.currentNode
   }
   
   /**
@@ -54,8 +160,8 @@ class SubworldNetworkService {
         timestamp: new Date().toISOString(),
       }
       
-      // Send the message through the Subworld network
-      const response = await fetch(`${this.apiBaseUrl}/messages/send`, {
+      // Send the message through the selected node
+      const response = await fetch(`${this.currentNode.address}/messages/send`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -90,7 +196,7 @@ class SubworldNetworkService {
         return this._mockFetchMessages()
       }
       
-      const response = await fetch(`${this.apiBaseUrl}/messages/inbox`, {
+      const response = await fetch(`${this.currentNode.address}/messages/inbox`, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${this.keyPair.publicKeyDisplay}`
@@ -135,55 +241,32 @@ class SubworldNetworkService {
   }
   
   /**
-   * Get contact information (if stored locally)
-   * @returns {Promise<Array>} - Array of contacts
+   * Check the health of a node
+   * @param {string} nodeAddress - Node address to check
+   * @returns {Promise<{isOnline: boolean, latency: number}>}
    */
-  async getContacts() {
+  async checkNodeHealth(nodeAddress) {
     try {
-      // Load contacts from localStorage
-      const contactsJson = localStorage.getItem('subworld_contacts')
-      return contactsJson ? JSON.parse(contactsJson) : []
-    } catch (error) {
-      console.error('Error getting contacts:', error)
-      return []
-    }
-  }
-  
-  /**
-   * Save a new contact or update an existing one
-   * @param {string} publicKey - Contact's public key
-   * @param {string} alias - Contact's alias (nickname)
-   * @returns {Promise<boolean>} - Success status
-   */
-  async saveContact(publicKey, alias) {
-    try {
-      // Load existing contacts
-      const contacts = await this.getContacts()
+      const startTime = Date.now()
       
-      // Check if contact exists
-      const existingContactIndex = contacts.findIndex(c => c.publicKey === publicKey)
+      const response = await fetch(`${nodeAddress}/health`, {
+        method: 'GET',
+        // Set a timeout to prevent long waits
+        signal: AbortSignal.timeout(5000)
+      })
       
-      if (existingContactIndex >= 0) {
-        // Update existing contact
-        contacts[existingContactIndex] = {
-          ...contacts[existingContactIndex],
-          alias: alias || contacts[existingContactIndex].alias
-        }
-      } else {
-        // Add new contact
-        contacts.push({
-          publicKey,
-          alias: alias || null,
-          createdAt: new Date().toISOString()
-        })
+      const latency = Date.now() - startTime
+      
+      return {
+        isOnline: response.ok,
+        latency
       }
-      
-      // Save updated contacts
-      localStorage.setItem('subworld_contacts', JSON.stringify(contacts))
-      return true
     } catch (error) {
-      console.error('Error saving contact:', error)
-      return false
+      console.error(`Error checking node health (${nodeAddress}):`, error)
+      return {
+        isOnline: false,
+        latency: 999
+      }
     }
   }
   
@@ -282,14 +365,49 @@ class SubworldNetworkService {
       }
     ]
     
-    // Save mock contacts to localStorage
-    const mockContacts = this._mockConversations.map(conv => ({
-      publicKey: conv.contact.publicKey,
-      alias: conv.contact.alias,
-      createdAt: new Date(Date.now() - 7 * 86400000).toISOString() // A week ago
-    }))
-    
-    localStorage.setItem('subworld_contacts', JSON.stringify(mockContacts))
+    // Mock nodes
+    this._mockNodes = [
+      { 
+        id: 'local', 
+        name: 'Local Node', 
+        address: 'http://localhost:8001', 
+        isOnline: true,
+        latency: 10,
+        description: 'Your local node (if running)'
+      },
+      { 
+        id: 'main1', 
+        name: 'Subworld Main 1', 
+        address: 'https://node1.subworld.network', 
+        isOnline: true,
+        latency: 55,
+        description: 'Primary node'
+      },
+      { 
+        id: 'main2', 
+        name: 'Subworld Main 2', 
+        address: 'https://node2.subworld.network', 
+        isOnline: false,
+        latency: 999,
+        description: 'Secondary node'
+      },
+      { 
+        id: 'community1', 
+        name: 'Community Node 1', 
+        address: 'https://subworld-community.example.com', 
+        isOnline: true,
+        latency: 120,
+        description: 'Operated by the community'
+      },
+      { 
+        id: 'dev1', 
+        name: 'Dev Testing Node', 
+        address: 'https://dev-node.subworld.test', 
+        isOnline: true,
+        latency: 80,
+        description: 'For development and testing'
+      }
+    ]
     
     console.log('Initialized mock data for development')
   }
@@ -355,8 +473,22 @@ class SubworldNetworkService {
     
     return Promise.resolve(allMessages)
   }
+  
+  /**
+   * Mock getting nodes (for development)
+   * @private
+   */
+  _mockGetNodes() {
+    // Simulate network delay
+    return new Promise(resolve => {
+      setTimeout(() => {
+        resolve(this._mockNodes)
+      }, 500)
+    })
+  }
 }
 
 // Create singleton instance
-const subworldNetwork = new SubworldNetworkService();
-export default subworldNetwork;
+const subworldNetwork = new SubworldNetworkService()
+
+export default subworldNetwork
