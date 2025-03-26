@@ -6,6 +6,7 @@ import { Menu, X, Send, MessageSquare, Users, User, Settings, Plus, ArrowLeft, S
 import { Upload, QrCode, Key, Trash2, Clock } from 'lucide-react'
 import ReactQRCode from 'react-qr-code';
 import { motion } from 'framer-motion'
+import { KeyGuard } from '../components/KeyGuard'
 
 const mockConversations = [
   {
@@ -132,6 +133,7 @@ export default function App() {
   }
 
   return (
+    <KeyGuard>
     <div className="h-screen bg-[#0E0F14]  text-white flex flex-col md:flex-row overflow-hidden">
       {/* Sidebar (messages list) */}
       <div className={`w-full md:w-1/4 border-r border-gray-700 flex flex-col h-full md:h-full overflow-hidden ${(!showConversationList || activeTab !== 'messages') && 'hidden md:flex'}`}>
@@ -334,6 +336,7 @@ export default function App() {
         </button>
       </motion.nav>
     </div>
+    </KeyGuard>
   )
 }
 

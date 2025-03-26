@@ -3,24 +3,63 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
-import { sha256 } from 'js-sha256'
 import { motion } from 'framer-motion'
-import { Copy, Check, ArrowLeft, Shield, AlertTriangle } from 'lucide-react'
+import { Copy, Check, ArrowLeft, Shield, AlertTriangle, Eye, EyeOff } from 'lucide-react'
+import LocalKeyStorageManager from '../../../utils/LocalKeyStorageManager'
 
 export default function CreateAccount() {
   const router = useRouter()
   const [privateKey, setPrivateKey] = useState('')
   const [publicKey, setPublicKey] = useState('')
+  const [privateKeyDisplay, setPrivateKeyDisplay] = useState('')
+  const [publicKeyDisplay, setPublicKeyDisplay] = useState('')
+  const [showFullPrivateKey, setShowFullPrivateKey] = useState(false)
   const [copiedPrivate, setCopiedPrivate] = useState(false)
   const [copiedPublic, setCopiedPublic] = useState(false)
+  const [isGenerating, setIsGenerating] = useState(true)
+  const [keyPair, setKeyPair] = useState(null) // Store the key pair temporarily
 
   useEffect(() => {
-    const mockPrivateKey = Array.from({ length: 32 }, () => Math.floor(Math.random() * 256).toString(16).padStart(2, '0')).join('')
-    setPrivateKey(mockPrivateKey)
+    const generateKeys = async () => {
+      try {
+        setIsGenerating(true);
+        
+        // Generate key pair with shorter display versions
+        const generatedKeyPair = await LocalKeyStorageManager.generateKeyPair(1024);
+        
+        // Store in state but don't save to storage yet
+        setKeyPair(generatedKeyPair);
 
-    const mockPublicKey = sha256(mockPrivateKey).slice(0, 40) 
-    setPublicKey(mockPublicKey)
-  }, [])
+        // Update state for display
+        setPrivateKey(generatedKeyPair.privateKey);
+        setPublicKey(generatedKeyPair.publicKey);
+        setPrivateKeyDisplay(generatedKeyPair.privateKeyDisplay);
+        setPublicKeyDisplay(generatedKeyPair.publicKeyDisplay);
+      } catch (error) {
+        console.error('Key generation failed:', error);
+      } finally {
+        setIsGenerating(false);
+      }
+    };
+
+    // Check if keys already exist
+    const existingKeys = LocalKeyStorageManager.getKeyPair();
+    if (existingKeys) {
+      // If keys exist, redirect to app
+      router.push('/app');
+    } else {
+      // Otherwise generate new keys
+      generateKeys();
+    }
+  }, [router])
+
+  const handleStartMessaging = () => {
+    // Save keys to local storage only when clicking Start Messaging
+    if (keyPair) {
+      LocalKeyStorageManager.saveKeyPair(keyPair);
+      router.push('/app');
+    }
+  }
 
   const copyToClipboard = (text, isPrivate) => {
     navigator.clipboard.writeText(text)
@@ -79,38 +118,58 @@ export default function CreateAccount() {
             Your New Account
           </h1>
           
-          <div className="space-y-6">
-            <div>
-              <h2 className="text-xl font-semibold mb-2 flex items-center">
-                <Shield className="w-5 h-5 mr-2 text-green-500" />
-                Private Key
-              </h2>
-              <div className="relative">
-                <p className="bg-gray-700/50 p-4 rounded-lg break-all text-sm">{privateKey}</p>
-                <button
-                  onClick={() => copyToClipboard(privateKey, true)}
-                  className="absolute top-2 right-2 text-gray-400 hover:text-white"
-                  aria-label="Copy private key"
-                >
-                  {copiedPrivate ? <Check className="w-5 h-5" /> : <Copy className="w-5 h-5" />}
-                </button>
+          {isGenerating ? (
+            <div className="flex justify-center items-center py-12">
+              <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+              <p className="ml-3 text-blue-400">Generating secure keys...</p>
+            </div>
+          ) : (
+            <div className="space-y-6">
+              <div>
+                <h2 className="text-xl font-semibold mb-2 flex items-center">
+                  <Shield className="w-5 h-5 mr-2 text-green-500" />
+                  Private Key
+                </h2>
+                <div className="relative">
+                  <p className="bg-gray-700/50 p-4 rounded-lg break-all text-sm">
+                    {showFullPrivateKey ? privateKey : privateKeyDisplay}
+                  </p>
+                  <div className="absolute top-2 right-2 flex space-x-2">
+                    <button
+                      onClick={() => setShowFullPrivateKey(!showFullPrivateKey)}
+                      className="text-gray-400 hover:text-white"
+                      aria-label={showFullPrivateKey ? "Hide full private key" : "Show full private key"}
+                    >
+                      {showFullPrivateKey ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                    </button>
+                    <button
+                      onClick={() => copyToClipboard(privateKey, true)}
+                      className="text-gray-400 hover:text-white"
+                      aria-label="Copy private key"
+                    >
+                      {copiedPrivate ? <Check className="w-5 h-5" /> : <Copy className="w-5 h-5" />}
+                    </button>
+                  </div>
+                </div>
+              </div>
+              
+              <div>
+                <h2 className="text-xl font-semibold mb-2">Your Username</h2>
+                <div className="relative">
+                  <p className="bg-gray-700/50 p-4 rounded-lg break-all text-sm">
+                    {publicKeyDisplay}
+                  </p>
+                  <button
+                    onClick={() => copyToClipboard(publicKeyDisplay, false)}
+                    className="absolute top-2 right-2 text-gray-400 hover:text-white"
+                    aria-label="Copy username"
+                  >
+                    {copiedPublic ? <Check className="w-5 h-5" /> : <Copy className="w-5 h-5" />}
+                  </button>
+                </div>
               </div>
             </div>
-            
-            <div>
-              <h2 className="text-xl font-semibold mb-2">Your Username</h2>
-              <div className="relative">
-                <p className="bg-gray-700/50 p-4 rounded-lg break-all text-sm">{publicKey}</p>
-                <button
-                  onClick={() => copyToClipboard(publicKey, false)}
-                  className="absolute top-2 right-2 text-gray-400 hover:text-white"
-                  aria-label="Copy username"
-                >
-                  {copiedPublic ? <Check className="w-5 h-5" /> : <Copy className="w-5 h-5" />}
-                </button>
-              </div>
-            </div>
-          </div>
+          )}
 
           <motion.div
             initial={{ opacity: 0, y: 20 }}
@@ -137,7 +196,8 @@ export default function CreateAccount() {
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
             className="w-full max-w-md mx-auto h-14 text-lg bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white flex items-center justify-center gap-2 rounded-xl transition-all duration-300 shadow-lg"
-            onClick={() => router.push('/app')}
+            onClick={handleStartMessaging}
+            disabled={isGenerating}
           >
             Start Messaging
           </motion.button>
@@ -158,4 +218,3 @@ export default function CreateAccount() {
     </motion.main>
   )
 }
-

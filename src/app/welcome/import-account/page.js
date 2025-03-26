@@ -3,27 +3,41 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
-import { sha256 } from 'js-sha256'
 import { motion } from 'framer-motion'
-import { Eye, EyeOff, ArrowLeft, Shield } from 'lucide-react'
+import { Eye, EyeOff, ArrowLeft, Shield, Loader } from 'lucide-react'
+import LocalKeyStorageManager from '../../../utils/LocalKeyStorageManager'
 
 export default function ImportAccount() {
   const router = useRouter()
   const [privateKey, setPrivateKey] = useState('')
   const [error, setError] = useState('')
   const [showKey, setShowKey] = useState(false)
+  const [isProcessing, setIsProcessing] = useState(false)
 
-  const handleImport = () => {
-    if (privateKey.length !== 64) {
-      setError('Invalid private key. Please enter a valid 64-character hexadecimal string.')
+  const handleImport = async () => {
+    if (!privateKey.trim()) {
+      setError('Please enter your private key')
       return
     }
 
-    const publicKey = sha256(privateKey).slice(0, 40)
-    
-    // Here you would typically save the keys securely and authenticate the user
-    // For demo purposes, we're just navigating to the app
-    router.push('/app')
+    try {
+      setIsProcessing(true)
+      setError('')
+
+      // Use the enhanced method to properly import the private key and derive the public key
+      const keyPair = await LocalKeyStorageManager.importPrivateKey(privateKey);
+      
+      // Save to local storage
+      LocalKeyStorageManager.saveKeyPair(keyPair);
+      
+      // Navigate to the app
+      router.push('/app');
+    } catch (error) {
+      console.error('Import failed:', error);
+      setError('Invalid key format. Please make sure you copied the entire private key correctly.');
+    } finally {
+      setIsProcessing(false);
+    }
   }
 
   return (
@@ -78,22 +92,25 @@ export default function ImportAccount() {
                 Enter your Private Key
               </label>
               <div className="relative">
-                <input
-                  type={showKey ? "text" : "password"}
+                <textarea
                   id="privateKey"
                   value={privateKey}
                   onChange={(e) => setPrivateKey(e.target.value)}
-                  className="w-full px-4 py-3 bg-gray-700/50 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent pr-10"
-                  placeholder="Enter your 64-character private key"
+                  className="w-full px-4 py-3 bg-gray-700/50 border border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent pr-10 min-h-[100px]"
+                  placeholder="Paste your private key here"
+                  style={{ fontFamily: 'monospace' }}
                 />
                 <button
                   type="button"
                   onClick={() => setShowKey(!showKey)}
-                  className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-white"
+                  className="absolute top-3 right-3 text-gray-400 hover:text-white"
                 >
                   {showKey ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                 </button>
               </div>
+              <p className="text-xs text-gray-400 mt-2">
+                Paste the complete private key that was provided when you created your account.
+              </p>
             </div>
 
             {error && (
@@ -110,9 +127,17 @@ export default function ImportAccount() {
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
               onClick={handleImport}
-              className="w-full h-14 text-lg bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white flex items-center justify-center gap-2 rounded-xl transition-all duration-300 shadow-lg"
+              disabled={isProcessing}
+              className="w-full h-14 text-lg bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white flex items-center justify-center gap-2 rounded-xl transition-all duration-300 shadow-lg disabled:opacity-70"
             >
-              Start Messaging
+              {isProcessing ? (
+                <>
+                  <Loader className="w-5 h-5 animate-spin" />
+                  <span>Processing...</span>
+                </>
+              ) : (
+                "Start Messaging"
+              )}
             </motion.button>
           </div>
         </motion.div>
@@ -149,4 +174,3 @@ export default function ImportAccount() {
     </motion.main>
   )
 }
-
