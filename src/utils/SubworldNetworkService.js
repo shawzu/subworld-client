@@ -71,14 +71,14 @@ class SubworldNetworkService {
     }
   }
 
-   /**
-   * Check node connection only when explicitly called - not automatic
-   */
-   async checkNodeConnection() {
+  /**
+  * Check node connection only when explicitly called - not automatic
+  */
+  async checkNodeConnection() {
     // Just return true - we'll disable automatic checks
     return true;
   }
-  
+
   /**
    * Check the health of a specific node
    * @param {string} nodeAddress - The address of the node to check
@@ -89,7 +89,7 @@ class SubworldNetworkService {
       // Cache check - don't check the same node more than once per minute
       const now = Date.now();
       const cacheKey = nodeAddress;
-      
+
       if (this.healthCheckCache.has(cacheKey)) {
         const cached = this.healthCheckCache.get(cacheKey);
         // If checked in the last 60 seconds, return cached result
@@ -101,34 +101,34 @@ class SubworldNetworkService {
           };
         }
       }
-      
+
       // Extract or use the API address (port 8081) for health checks
-      const apiAddress = nodeAddress.includes(':8081') ? 
-                         nodeAddress : 
-                         (nodeAddress.includes(':8080') ? 
-                          nodeAddress.replace(':8080', ':8081') : 
-                          nodeAddress + ':8081');
-      
+      const apiAddress = nodeAddress.includes(':8081') ?
+        nodeAddress :
+        (nodeAddress.includes(':8080') ?
+          nodeAddress.replace(':8080', ':8081') :
+          nodeAddress + ':8081');
+
       const healthEndpoint = `${apiAddress}/health`;
       console.log(`Checking node health: ${healthEndpoint}`);
-      
+
       // Measure latency
       const startTime = Date.now();
-      
+
       // Add timeout to the fetch request
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 5000);
-      
+
       const response = await fetch(healthEndpoint, {
         method: 'GET',
         signal: controller.signal
       });
-      
+
       clearTimeout(timeoutId);
-      
+
       const latency = Date.now() - startTime;
       let result;
-      
+
       if (response.ok) {
         const data = await response.json();
         result = {
@@ -138,24 +138,24 @@ class SubworldNetworkService {
       } else {
         result = { isOnline: false, latency: 999 };
       }
-      
+
       // Cache the result
       this.healthCheckCache.set(cacheKey, {
         ...result,
         timestamp: now
       });
-      
+
       return result;
     } catch (error) {
       console.error('Health check failed:', error);
-      
+
       // Cache the failure to avoid repeated failed attempts
       this.healthCheckCache.set(nodeAddress, {
         isOnline: false,
         latency: 999,
         timestamp: Date.now()
       });
-      
+
       return { isOnline: false, latency: 999 };
     }
   }
@@ -345,7 +345,7 @@ class SubworldNetworkService {
 
   /**
    * Send a message to a recipient
-   * @param {string} recipientPublicKey - Recipient's public key
+   * @param {string} recipientPublicKey - Recipient's public key display
    * @param {string} content - Message content
    * @returns {Promise<{success: boolean, messageId: string}>}
    */
@@ -355,32 +355,32 @@ class SubworldNetworkService {
         throw new Error('No node selected');
       }
 
-      // No health check - assume node is online
+      // Log for debugging
+      console.log('Sending message to recipient:', recipientPublicKey);
 
-      // Encrypt the message content
+      // Encrypt the message with recipient's display key
       const encryptedData = await LocalKeyStorageManager.encryptMessage(
         content,
         recipientPublicKey
       );
 
-      // Prepare the message payload according to the API requirements
-      // Adjusted to match the exact field names from your network API
+      // Prepare the message payload
       const message = {
-        recipient_id: recipientPublicKey, // API uses snake_case
+        recipient_id: recipientPublicKey,
         sender_id: this.keyPair.publicKeyDisplay,
         encrypted_data: encryptedData,
-        type: 0, // TypeMessage (0) as defined in your API
+        type: 0,
         timestamp: new Date().toISOString(),
-        id: `msg-${Date.now()}` // Generate a unique ID as seen in your API
+        id: `msg-${Date.now()}`
       };
 
       // Use the API address (port 8081) for API calls
       const apiAddress = this.currentNode.apiAddress ||
         this.currentNode.address.replace(':8080', ':8081');
 
-      console.log('Sending message to API:', apiAddress + '/messages/send', message);
+      console.log('Sending message to API:', apiAddress + '/messages/send');
 
-      // Send the message using the API endpoint
+      // Send the message
       const response = await fetch(`${apiAddress}/messages/send`, {
         method: 'POST',
         headers: {
@@ -400,9 +400,8 @@ class SubworldNetworkService {
 
       return {
         success: true,
-        messageId: data.id || `local-${Date.now()}` // Use the ID from the response or generate a local one
+        messageId: data.id || `local-${Date.now()}`
       };
-
     } catch (error) {
       console.error('Error sending message:', error);
       throw error;
@@ -424,7 +423,6 @@ class SubworldNetworkService {
         this.currentNode.address.replace(':8080', ':8081');
 
       console.log('Fetching messages for user:', this.keyPair.publicKeyDisplay);
-      console.log('Using API address:', apiAddress + '/messages/get');
 
       // Make GET request to fetch user messages
       const response = await fetch(`${apiAddress}/messages/get?user_id=${this.keyPair.publicKeyDisplay}&fetch_remote=true`, {
@@ -441,13 +439,13 @@ class SubworldNetworkService {
       }
 
       const messages = await response.json();
-      console.log('Received messages:', messages);
+      console.log('Received messages count:', messages.length);
 
       // Decrypt the messages
       const decryptedMessages = await Promise.all(
         messages.map(async (message) => {
           try {
-            // Handle snake_case vs camelCase field names from the API
+            // Extract the message properties
             const messageId = message.id || message.ID;
             const senderId = message.sender_id || message.senderID;
             const recipientId = message.recipient_id || message.recipientID;
@@ -465,10 +463,23 @@ class SubworldNetworkService {
               };
             }
 
-            // Decrypt the message content
+            // For messages sent by the current user, decrypt with recipient's key
+            // For messages received by the current user, decrypt with sender's key
+            let decryptionKey;
+
+            if (senderId === this.keyPair.publicKeyDisplay) {
+              // Message sent by current user
+              decryptionKey = recipientId;
+            } else {
+              // Message received by current user
+              decryptionKey = senderId;
+            }
+
+            console.log(`Decrypting message ${messageId} using key:`, decryptionKey);
+
             const decryptedContent = await LocalKeyStorageManager.decryptMessage(
               encryptedData,
-              this.keyPair.privateKey
+              decryptionKey
             );
 
             return {
@@ -480,14 +491,15 @@ class SubworldNetworkService {
               status: message.delivered ? 'delivered' : 'received'
             };
           } catch (error) {
-            console.error('Error decrypting message:', error, message);
+            console.error('Error decrypting message:', error);
+            console.log('Failed message:', message);
 
-            // Return a formatted message even on error
             return {
               id: message.id || message.ID || `error-${Date.now()}`,
               sender: message.sender_id || message.senderID || 'unknown',
               recipient: message.recipient_id || message.recipientID || this.keyPair.publicKeyDisplay,
               content: '[Encrypted message - Unable to decrypt]',
+              originalEncrypted: message.encrypted_data || message.encryptedData, // Keep for debugging
               timestamp: message.timestamp || new Date().toISOString(),
               status: 'error'
             };
@@ -496,7 +508,6 @@ class SubworldNetworkService {
       );
 
       return decryptedMessages;
-
     } catch (error) {
       console.error('Error fetching messages:', error);
       throw error;

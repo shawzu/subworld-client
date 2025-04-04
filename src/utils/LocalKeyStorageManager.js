@@ -2,41 +2,37 @@
 
 /**
  * LocalKeyStorageManager.js
- * A very simple key management system that focuses on consistency
+ * A complete, reliable key management and encryption system using TweetNaCl
  */
+
+// Import the required libraries
+import nacl from 'tweetnacl';
+import { encodeBase64, decodeBase64 } from 'tweetnacl-util';
+import { encode as encodeUTF8, decode as decodeUTF8 } from '@stablelib/utf8';
 
 class LocalKeyStorageManager {
   /**
-   * Generate a cryptographically secure key pair
-   * @param {number} keySize - Size in bits for RSA key (1024, 2048, or 4096)
-   * @returns {Promise<{publicKey: string, privateKey: string, publicKeyDisplay: string, privateKeyDisplay: string}>}
+   * Generate a secure key pair
+   * @returns {Promise<{publicKey: string, privateKey: string, publicKeyDisplay: string, privateKeyDisplay: string, publicKeyHash: string}>}
    */
-  static async generateKeyPair(keySize = 2048) {
+  static async generateKeyPair() {
     try {
-      // Generate RSA key pair using Web Crypto API
-      const keyPair = await window.crypto.subtle.generateKey(
-        {
-          name: 'RSA-OAEP',
-          modulusLength: keySize,
-          publicExponent: new Uint8Array([1, 0, 1]),
-          hash: 'SHA-256',
-        },
-        true,
-        ['encrypt', 'decrypt']
-      );
-
-      // Export keys to base64 strings for storage
-      const publicKey = await this.exportPublicKey(keyPair.publicKey);
-      const privateKey = await this.exportPrivateKey(keyPair.privateKey);
-
-      // Generate unique identifier from the private key
-      // For consistency, we'll compute the publicKeyHash from the privateKey
-      // This ensures that encryption/decryption will work properly
-      const publicKeyHash = await this.hashString(privateKey);
+      // Generate a new keypair using NaCl
+      const keyPair = nacl.box.keyPair();
+      
+      // Encode the keys as Base64 strings
+      const publicKey = encodeBase64(keyPair.publicKey);
+      const privateKey = encodeBase64(keyPair.secretKey);
+      
+      // Create a hash of the public key for identification
+      const publicKeyHash = await this.hashString(publicKey);
+      
+      // Create display versions of the keys
       const publicKeyDisplay = this.formatHashForDisplay(publicKeyHash.slice(0, 16));
       const privateKeyDisplay = this.createShortPrivateKey(privateKey);
-
+      
       return {
+        publicKey,
         privateKey,
         publicKeyDisplay,
         privateKeyDisplay,
@@ -47,20 +43,30 @@ class LocalKeyStorageManager {
       throw error;
     }
   }
-
+  
   /**
-   * Import a private key
-   * @param {string} privateKey - The private key string
-   * @returns {Promise<{privateKey: string, publicKeyDisplay: string, privateKeyDisplay: string, publicKeyHash: string}>}
+   * Import an existing private key
+   * @param {string} privateKey - Base64 encoded private key
+   * @returns {Promise<{publicKey: string, privateKey: string, publicKeyDisplay: string, privateKeyDisplay: string, publicKeyHash: string}>}
    */
   static async importPrivateKey(privateKey) {
     try {
-      // Generate the exact same identifiers as in generateKeyPair
-      const publicKeyHash = await this.hashString(privateKey);
+      // Decode the private key from Base64
+      const secretKey = decodeBase64(privateKey);
+      
+      // Derive the public key from the private key
+      const keyPair = nacl.box.keyPair.fromSecretKey(secretKey);
+      const publicKey = encodeBase64(keyPair.publicKey);
+      
+      // Create a hash of the public key
+      const publicKeyHash = await this.hashString(publicKey);
+      
+      // Create display versions
       const publicKeyDisplay = this.formatHashForDisplay(publicKeyHash.slice(0, 16));
       const privateKeyDisplay = this.createShortPrivateKey(privateKey);
-
+      
       return {
+        publicKey,
         privateKey,
         publicKeyDisplay,
         privateKeyDisplay,
@@ -68,106 +74,59 @@ class LocalKeyStorageManager {
       };
     } catch (error) {
       console.error('Failed to import private key:', error);
-      throw error;
+      throw new Error('Invalid key format. Please check your private key and try again.');
     }
   }
-
+  
   /**
-   * Hash a string consistently
-   * @param {string} str - String to hash
-   * @returns {Promise<string>} - Hex hash string
-   */
-  static async hashString(str) {
-    const encoder = new TextEncoder();
-    const data = encoder.encode(str);
-    const hashBuffer = await window.crypto.subtle.digest('SHA-256', data);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-  }
-
-  /**
-   * Format a hash string into a display format with dashes
-   * @param {string} hash - Hash string
-   * @returns {string} - Formatted display string
-   */
-  static formatHashForDisplay(hash) {
-    return hash.match(/.{1,4}/g).join('-');
-  }
-
-  /**
-   * Create a shorter version of the private key for display
-   * @param {string} privateKey - Full private key
-   * @returns {string} Short version for display
-   */
-  static createShortPrivateKey(privateKey) {
-    const start = privateKey.substring(0, 12);
-    const end = privateKey.substring(privateKey.length - 12);
-    return `${start}...${end}`;
-  }
-
-  /**
-   * Export public key to base64 string
-   * @param {CryptoKey} key - Public key to export
-   * @returns {Promise<string>} Base64 encoded public key
-   */
-  static async exportPublicKey(key) {
-    const exportedKey = await window.crypto.subtle.exportKey('spki', key);
-    return this.arrayBufferToBase64(exportedKey);
-  }
-
-  /**
-   * Export private key to base64 string
-   * @param {CryptoKey} key - Private key to export
-   * @returns {Promise<string>} Base64 encoded private key
-   */
-  static async exportPrivateKey(key) {
-    const exportedKey = await window.crypto.subtle.exportKey('pkcs8', key);
-    return this.arrayBufferToBase64(exportedKey);
-  }
-
-  /**
-   * Save key information to local storage
-   * @param {{privateKey: string, publicKeyDisplay: string, privateKeyDisplay: string, publicKeyHash: string}} keyInfo
+   * Save key pair to local storage
+   * @param {{publicKey: string, privateKey: string, publicKeyDisplay: string, privateKeyDisplay: string, publicKeyHash: string}} keyInfo
    * @returns {boolean} Success status
    */
   static saveKeyPair(keyInfo) {
     try {
       if (typeof window === 'undefined') return false;
-
+      
+      // Encrypt the private key before storing
       const encryptedPrivateKey = this.simpleEncrypt(keyInfo.privateKey);
-
+      
+      // Store all key information
       localStorage.setItem('subworld_private_key', encryptedPrivateKey);
+      localStorage.setItem('subworld_public_key', keyInfo.publicKey);
       localStorage.setItem('subworld_public_key_display', keyInfo.publicKeyDisplay);
       localStorage.setItem('subworld_private_key_display', keyInfo.privateKeyDisplay);
       localStorage.setItem('subworld_public_key_hash', keyInfo.publicKeyHash);
-
+      
       return true;
     } catch (error) {
       console.error('Error saving keys:', error);
       return false;
     }
   }
-
+  
   /**
-   * Retrieve key information from local storage
-   * @returns {{privateKey: string, publicKeyDisplay: string, privateKeyDisplay: string, publicKeyHash: string} | null}
+   * Retrieve key pair from local storage
+   * @returns {{publicKey: string, privateKey: string, publicKeyDisplay: string, privateKeyDisplay: string, publicKeyHash: string} | null}
    */
   static getKeyPair() {
     try {
       if (typeof window === 'undefined') return null;
-
+      
+      // Get encrypted private key
       const encryptedPrivateKey = localStorage.getItem('subworld_private_key');
+      if (!encryptedPrivateKey) return null;
+      
+      // Get other key information
+      const publicKey = localStorage.getItem('subworld_public_key');
       const publicKeyDisplay = localStorage.getItem('subworld_public_key_display');
       const privateKeyDisplay = localStorage.getItem('subworld_private_key_display');
       const publicKeyHash = localStorage.getItem('subworld_public_key_hash');
-
-      if (!encryptedPrivateKey) {
-        return null;
-      }
-
+      
+      // Decrypt the private key
       const privateKey = this.simpleDecrypt(encryptedPrivateKey);
-
+      
       return {
+        publicKey,
         privateKey,
         publicKeyDisplay,
         privateKeyDisplay,
@@ -178,28 +137,163 @@ class LocalKeyStorageManager {
       return null;
     }
   }
-
+  
   /**
-   * Delete stored key information
+   * Delete key pair from local storage
    * @returns {boolean} Success status
    */
   static deleteKeyPair() {
     try {
       if (typeof window === 'undefined') return false;
-
+      
       localStorage.removeItem('subworld_private_key');
+      localStorage.removeItem('subworld_public_key');
       localStorage.removeItem('subworld_public_key_display');
       localStorage.removeItem('subworld_private_key_display');
       localStorage.removeItem('subworld_public_key_hash');
+      
       return true;
     } catch (error) {
       console.error('Error deleting keys:', error);
       return false;
     }
   }
-
+  
   /**
-   * Simple encryption for storage (basic obfuscation)
+   * Encrypt a message 
+   * @param {string} message - Plain text message to encrypt
+   * @param {string} recipientKeyDisplay - Recipient's display key
+   * @returns {Promise<string>} Base64 encoded encrypted message
+   */
+  static async encryptMessage(message, recipientKeyDisplay) {
+    try {
+      // Get sender's key pair
+      const senderKeyPair = this.getKeyPair();
+      if (!senderKeyPair) throw new Error('No key pair found. Please create or import a key pair.');
+      
+      // Create a symmetric key from both parties' display keys
+      const symmetricKey = await this.deriveSharedKeyFromDisplayKeys(
+        senderKeyPair.publicKeyDisplay,
+        recipientKeyDisplay
+      );
+      
+      // Generate a random nonce
+      const nonce = nacl.randomBytes(nacl.secretbox.nonceLength);
+      
+      // Encrypt the message using the symmetric key
+      const messageUint8 = encodeUTF8(message);
+      const encryptedMessage = nacl.secretbox(messageUint8, nonce, symmetricKey);
+      
+      // Combine nonce and encrypted message
+      const fullMessage = new Uint8Array(nonce.length + encryptedMessage.length);
+      fullMessage.set(nonce);
+      fullMessage.set(encryptedMessage, nonce.length);
+      
+      // Return as Base64
+      return encodeBase64(fullMessage);
+    } catch (error) {
+      console.error('Encryption failed:', error);
+      throw error;
+    }
+  }
+  
+  /**
+   * Decrypt a message
+   * @param {string} encryptedMessage - Base64 encoded encrypted message
+   * @param {string} senderKeyDisplay - Sender's display key
+   * @returns {Promise<string>} Decrypted plain text message
+   */
+  static async decryptMessage(encryptedMessage, senderKeyDisplay) {
+    try {
+      // Get receiver's key pair
+      const receiverKeyPair = this.getKeyPair();
+      if (!receiverKeyPair) throw new Error('No key pair found. Please create or import a key pair.');
+      
+      // Create the same symmetric key from both parties' display keys
+      const symmetricKey = await this.deriveSharedKeyFromDisplayKeys(
+        senderKeyDisplay,
+        receiverKeyPair.publicKeyDisplay
+      );
+      
+      // Decode the full message from Base64
+      const fullMessage = decodeBase64(encryptedMessage);
+      
+      // Extract nonce and encrypted message
+      const nonce = fullMessage.slice(0, nacl.secretbox.nonceLength);
+      const encryptedData = fullMessage.slice(nacl.secretbox.nonceLength);
+      
+      // Decrypt the message
+      const decryptedMessage = nacl.secretbox.open(encryptedData, nonce, symmetricKey);
+      if (!decryptedMessage) throw new Error('Decryption failed. Invalid message or wrong key.');
+      
+      // Convert back to string
+      return decodeUTF8(decryptedMessage);
+    } catch (error) {
+      console.error('Decryption failed:', error);
+      throw error;
+    }
+  }
+  
+  /**
+   * Derive a shared encryption key from two display keys
+   * @param {string} key1 - First display key
+   * @param {string} key2 - Second display key
+   * @returns {Promise<Uint8Array>} 32-byte key for encryption/decryption
+   */
+  static async deriveSharedKeyFromDisplayKeys(key1, key2) {
+    // Sort the keys to ensure the same key is derived regardless of who's sending/receiving
+    const sortedKeys = [key1, key2].sort();
+    
+    // Combine the keys
+    const combinedKey = sortedKeys[0] + sortedKeys[1];
+    
+    // Hash the combined key to get a reliable 32-byte encryption key
+    const hash = await this.hashString(combinedKey);
+    
+    // Convert the hex hash to a Uint8Array (first 32 bytes)
+    const keyBytes = new Uint8Array(32);
+    for (let i = 0; i < 32; i++) {
+      keyBytes[i] = parseInt(hash.substring(i * 2, i * 2 + 2), 16);
+    }
+    
+    return keyBytes;
+  }
+  
+  /**
+   * Hash a string using SHA-256
+   * @param {string} str - String to hash
+   * @returns {Promise<string>} Hex hash string
+   */
+  static async hashString(str) {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(str);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+  
+  /**
+   * Format a hash as a display key with dashes
+   * @param {string} hash - Hash string
+   * @returns {string} Formatted display key
+   */
+  static formatHashForDisplay(hash) {
+    return hash.match(/.{1,4}/g).join('-');
+  }
+  
+  /**
+   * Create a shortened version of a private key for display
+   * @param {string} privateKey - Full private key
+   * @returns {string} Shortened private key
+   */
+  static createShortPrivateKey(privateKey) {
+    const start = privateKey.substring(0, 12);
+    const end = privateKey.substring(privateKey.length - 12);
+    return `${start}...${end}`;
+  }
+  
+  /**
+   * Simple encryption for local storage (not secure, just obfuscation)
    * @param {string} text - Text to encrypt
    * @returns {string} Encrypted text
    */
@@ -208,9 +302,9 @@ class LocalKeyStorageManager {
       String.fromCharCode(char.charCodeAt(0) + 1)
     ).join(''));
   }
-
+  
   /**
-   * Simple decryption for storage
+   * Simple decryption for local storage
    * @param {string} encrypted - Encrypted text
    * @returns {string} Decrypted text
    */
@@ -219,97 +313,42 @@ class LocalKeyStorageManager {
       String.fromCharCode(char.charCodeAt(0) - 1)
     ).join('');
   }
-
-  /**
-   * Convert ArrayBuffer to Base64
-   * @param {ArrayBuffer} buffer - Buffer to convert
-   * @returns {string} Base64 encoded string
-   */
-  static arrayBufferToBase64(buffer) {
-    const bytes = new Uint8Array(buffer);
-    let binary = '';
-    for (let i = 0; i < bytes.byteLength; i++) {
-      binary += String.fromCharCode(bytes[i]);
-    }
-    return btoa(binary);
-  }
-
-  /**
-   * Convert base64 string to ArrayBuffer
-   * @param {string} base64 - Base64 encoded string
-   * @returns {ArrayBuffer} Converted ArrayBuffer
-   */
-  static base64ToArrayBuffer(base64) {
-    const binaryString = atob(base64);
-    const bytes = new Uint8Array(binaryString.length);
-    for (let i = 0; i < binaryString.length; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
-    }
-    return bytes.buffer;
-  }
-
-  static async encryptMessage(message, recipientPublicKeyHash) {
-    try {
-      // Convert message to bytes
-      const encoder = new TextEncoder();
-      const messageBytes = encoder.encode(message);
-      
-      // Create a key from the recipient's public key hash
-      const keyBytes = this.generateKeyBytesFromHash(recipientPublicKeyHash);
-      
-      // XOR encryption - FIXED: make sure to encrypt ALL bytes properly
-      const encryptedBytes = new Uint8Array(messageBytes.length);
-      for (let i = 0; i < messageBytes.length; i++) {
-        encryptedBytes[i] = messageBytes[i] ^ keyBytes[i % keyBytes.length];
-      }
-      
-      // Convert to base64 for transmission
-      return this.arrayBufferToBase64(encryptedBytes);
-    } catch (error) {
-      console.error('Encryption failed:', error);
-      throw error;
-    }
-  }
-
-  static async decryptMessage(encryptedMessage, privateKey) {
-    try {
-      // Get our public key hash from private key
-      const publicKeyHash = await this.hashString(privateKey);
-      
-      // Convert encrypted message from base64 to bytes
-      const encryptedBytes = new Uint8Array(this.base64ToArrayBuffer(encryptedMessage));
-      
-      // Create the same key bytes that were used for encryption
-      const keyBytes = this.generateKeyBytesFromHash(publicKeyHash);
-      
-      // XOR decryption (same as encryption since XOR is symmetric)
-      const decryptedBytes = new Uint8Array(encryptedBytes.length);
-      for (let i = 0; i < encryptedBytes.length; i++) {
-        decryptedBytes[i] = encryptedBytes[i] ^ keyBytes[i % keyBytes.length];
-      }
-      
-      // Convert bytes back to string
-      const decoder = new TextDecoder();
-      return decoder.decode(decryptedBytes);
-    } catch (error) {
-      console.error('Decryption failed:', error);
-      throw error;
-    }
-  }
   
   /**
-   * Generate consistent key bytes from a hash string
-   * This ensures encryption and decryption use the same key
-   * @param {string} hash - Hash string (hex format)
-   * @returns {Uint8Array} - Key bytes for encryption/decryption
+   * Test the encryption system
+   * @returns {Promise<{success: boolean, message: string, encrypted: string, decrypted: string}>}
    */
-  static generateKeyBytesFromHash(hash) {
-    // Convert hex hash to bytes
-    const keyBytes = new Uint8Array(hash.length / 2);
-    for (let i = 0; i < hash.length; i += 2) {
-      keyBytes[i / 2] = parseInt(hash.substring(i, i + 2), 16);
+  static async testEncryption() {
+    try {
+      // Get current user's keys
+      const keyPair = this.getKeyPair();
+      if (!keyPair) throw new Error('No key pair found');
+      
+      // Test message
+      const message = `Test message with special chars: éèàùñ 你好 !@#$%^&*() [${Date.now()}]`;
+      console.log('Original message:', message);
+      
+      // Encrypt with own key (for testing)
+      const encrypted = await this.encryptMessage(message, keyPair.publicKeyDisplay);
+      console.log('Encrypted:', encrypted);
+      
+      // Decrypt
+      const decrypted = await this.decryptMessage(encrypted, keyPair.publicKeyDisplay);
+      console.log('Decrypted:', decrypted);
+      
+      return {
+        success: message === decrypted,
+        message,
+        encrypted,
+        decrypted
+      };
+    } catch (error) {
+      console.error('Test failed:', error);
+      return {
+        success: false,
+        error: error.message
+      };
     }
-    return keyBytes;
   }
 }
 
