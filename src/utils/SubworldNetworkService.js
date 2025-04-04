@@ -23,7 +23,7 @@ class SubworldNetworkService {
     this.keyPair = null;
     
     // Emergency flag to disable all automatic health checks
-    this.disableHealthChecks = true;
+    this.disableHealthChecks = false; // Enable health checks
   }
   
   /**
@@ -80,6 +80,54 @@ class SubworldNetworkService {
   }
   
   /**
+   * Check the health of a specific node
+   * @param {string} nodeAddress - The address of the node to check
+   * @returns {Promise<{isOnline: boolean, latency: number}>}
+   */
+  async checkNodeHealth(nodeAddress) {
+    try {
+      // Extract or use the API address (port 8081) for health checks
+      const apiAddress = nodeAddress.includes(':8081') ? 
+                         nodeAddress : 
+                         (nodeAddress.includes(':8080') ? 
+                          nodeAddress.replace(':8080', ':8081') : 
+                          nodeAddress + ':8081');
+      
+      const healthEndpoint = `${apiAddress}/health`;
+      console.log(`Checking node health: ${healthEndpoint}`);
+      
+      // Measure latency
+      const startTime = Date.now();
+      
+      // Add timeout to the fetch request
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      
+      const response = await fetch(healthEndpoint, {
+        method: 'GET',
+        signal: controller.signal
+      });
+      
+      clearTimeout(timeoutId);
+      
+      const latency = Date.now() - startTime;
+      
+      if (response.ok) {
+        const data = await response.json();
+        return {
+          isOnline: data.status === 'ok',
+          latency: latency
+        };
+      }
+      
+      return { isOnline: false, latency: 999 };
+    } catch (error) {
+      console.error('Health check failed:', error);
+      return { isOnline: false, latency: 999 };
+    }
+  }
+  
+  /**
    * Set the current node to use for API calls
    * @param {Object} node - Node object with address and other details
    */
@@ -102,12 +150,27 @@ class SubworldNetworkService {
       
       console.log('Setting current node:', updatedNode);
       
-      // Set node to online without checking
-      updatedNode.isOnline = true;
-      updatedNode.latency = 100; // Default latency
+      // Check node health if health checks are enabled
+      if (!this.disableHealthChecks) {
+        try {
+          const healthResult = await this.checkNodeHealth(updatedNode.apiAddress);
+          updatedNode.isOnline = healthResult.isOnline;
+          updatedNode.latency = healthResult.latency;
+          this.isConnected = healthResult.isOnline;
+        } catch (error) {
+          console.error('Health check failed during node selection:', error);
+          updatedNode.isOnline = false;
+          updatedNode.latency = 999;
+          this.isConnected = false;
+        }
+      } else {
+        // Set node to online without checking
+        updatedNode.isOnline = true;
+        updatedNode.latency = 100; // Default latency
+        this.isConnected = true;
+      }
       
       this.currentNode = updatedNode;
-      this.isConnected = true;
       
       // Save to localStorage
       localStorage.setItem('subworld_preferred_node', JSON.stringify(updatedNode));
@@ -232,7 +295,7 @@ class SubworldNetworkService {
     } catch (error) {
       console.error('Error fetching nodes:', error);
       
-      // Always return both nodes as fallback
+      // Always return bootstrap node as fallback
       return [
         {
           id: 'bootstrap1',
@@ -241,7 +304,7 @@ class SubworldNetworkService {
           apiAddress: 'http://93.4.27.35:8081', // API port
           isBootstrap: true,
           isOnline: true,
-          description: 'Primary bootstrap node'
+          description: 'Primary bootstrap node (93.4.27.35)'
         }
       ];
     }
@@ -268,13 +331,14 @@ class SubworldNetworkService {
       );
       
       // Prepare the message payload according to the API requirements
-      // Using the exact field names from your API
+      // Adjusted to match the exact field names from your network API
       const message = {
-        recipientID: recipientPublicKey,
-        senderID: this.keyPair.publicKeyDisplay,
-        encryptedData: encryptedData,
+        recipient_id: recipientPublicKey, // API uses snake_case
+        sender_id: this.keyPair.publicKeyDisplay, 
+        encrypted_data: encryptedData,
         type: 0, // TypeMessage (0) as defined in your API
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        id: `msg-${Date.now()}` // Generate a unique ID as seen in your API
       };
       
       // Use the API address (port 8081) for API calls
@@ -322,8 +386,6 @@ class SubworldNetworkService {
         throw new Error('No node selected');
       }
       
-      // No health check - assume node is online
-      
       // Use the API address (port 8081) for API calls
       const apiAddress = this.currentNode.apiAddress || 
                        this.currentNode.address.replace(':8080', ':8081');
@@ -352,40 +414,49 @@ class SubworldNetworkService {
       const decryptedMessages = await Promise.all(
         messages.map(async (message) => {
           try {
-            if (!message.encryptedData) {
+            // Handle snake_case vs camelCase field names from the API
+            const messageId = message.id || message.ID;
+            const senderId = message.sender_id || message.senderID;
+            const recipientId = message.recipient_id || message.recipientID;
+            const encryptedData = message.encrypted_data || message.encryptedData;
+            const timestamp = message.timestamp || new Date().toISOString();
+            
+            if (!encryptedData) {
               return {
-                ...message,
+                id: messageId,
+                sender: senderId,
+                recipient: recipientId,
                 content: '[No message content]',
-                id: message.ID || message.id,
-                sender: message.senderID,
-                recipient: message.recipientID,
-                timestamp: message.timestamp
+                timestamp: timestamp,
+                status: 'received'
               };
             }
             
             // Decrypt the message content
             const decryptedContent = await LocalKeyStorageManager.decryptMessage(
-              message.encryptedData,
+              encryptedData,
               this.keyPair.privateKey
             );
             
             return {
-              ...message,
+              id: messageId,
+              sender: senderId,
+              recipient: recipientId,
               content: decryptedContent,
-              id: message.ID || message.id,
-              sender: message.senderID,
-              recipient: message.recipientID,
-              timestamp: message.timestamp
+              timestamp: timestamp,
+              status: message.delivered ? 'delivered' : 'received'
             };
           } catch (error) {
-            console.error('Error decrypting message:', error);
+            console.error('Error decrypting message:', error, message);
+            
+            // Return a formatted message even on error
             return {
-              ...message,
+              id: message.id || message.ID || `error-${Date.now()}`,
+              sender: message.sender_id || message.senderID || 'unknown',
+              recipient: message.recipient_id || message.recipientID || this.keyPair.publicKeyDisplay,
               content: '[Encrypted message - Unable to decrypt]',
-              id: message.ID || message.id,
-              sender: message.senderID,
-              recipient: message.recipientID,
-              timestamp: message.timestamp
+              timestamp: message.timestamp || new Date().toISOString(),
+              status: 'error'
             };
           }
         })
@@ -401,7 +472,7 @@ class SubworldNetworkService {
   
   /**
    * Mark messages as delivered
-   * @param {string} userID - User ID
+   * @param {string} userID - User ID (recipient's public key)
    * @param {Array<string>} messageIDs - Array of message IDs to mark as delivered
    * @returns {Promise<boolean>} - Success status
    */
@@ -411,11 +482,19 @@ class SubworldNetworkService {
         throw new Error('No node selected');
       }
       
+      if (!messageIDs || messageIDs.length === 0) {
+        console.log('No message IDs provided to mark as delivered');
+        return false;
+      }
+      
       // Use the API address (port 8081) for API calls
       const apiAddress = this.currentNode.apiAddress || 
                        this.currentNode.address.replace(':8080', ':8081');
       
-      // Prepare the request payload
+      console.log(`Marking ${messageIDs.length} messages as delivered for user ${userID}`);
+      
+      // Prepare the request payload according to the API format
+      // The API expects snake_case for property names
       const payload = {
         user_id: userID,
         message_ids: messageIDs
@@ -432,11 +511,15 @@ class SubworldNetworkService {
       
       if (!response.ok) {
         const errorData = await response.text();
-        console.error('Server response:', errorData);
+        console.error('Failed to mark messages as delivered:', errorData);
         throw new Error(`Failed to mark messages as delivered: ${response.status}`);
       }
       
-      return true;
+      // Parse the response to confirm success
+      const result = await response.json();
+      console.log('Mark delivered response:', result);
+      
+      return result.status === 'success';
       
     } catch (error) {
       console.error('Error marking messages as delivered:', error);
@@ -476,8 +559,6 @@ class SubworldNetworkService {
       return null;
     }
   }
-  
-  // No health check method - completely disabled to prevent excessive calls
 }
 
 // Create singleton instance

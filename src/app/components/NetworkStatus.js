@@ -20,23 +20,44 @@ export default function NetworkStatus({ selectedNode }) {
     const checkConnection = async () => {
       // Skip if already performing a check
       if (checking) return;
-      
+
       try {
         setChecking(true);
-        
-        // Check node health via the network service
-        const healthResult = await subworldNetwork.checkNodeHealth(selectedNode.address);
-        setIsConnected(healthResult.isOnline);
-        
-        // If connected, try to get additional node info
-        if (healthResult.isOnline && subworldNetwork.isConnected) {
+
+        // Use the API address with the /health endpoint
+        const apiAddress = selectedNode.apiAddress ||
+          (selectedNode.address.includes(':8080') ?
+            selectedNode.address.replace(':8080', ':8081') :
+            selectedNode.address);
+
+        const healthEndpoint = `${apiAddress}/health`;
+
+        // Check node health with a timeout
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+        const response = await fetch(healthEndpoint, {
+          method: 'GET',
+          signal: controller.signal
+        });
+
+        clearTimeout(timeoutId);
+
+        if (response.ok) {
+          const healthData = await response.json();
+          setIsConnected(healthData.status === 'ok');
+
+          // If connected, try to get additional node info
           const info = await subworldNetwork.getNodeInfo();
           if (info) {
             setNodeInfo(info);
           }
+        } else {
+          setIsConnected(false);
         }
       } catch (error) {
         // Silently handle errors
+        console.log('Health check failed:', error.message);
         setIsConnected(false);
       } finally {
         setChecking(false);
@@ -46,8 +67,8 @@ export default function NetworkStatus({ selectedNode }) {
     // Initial check
     checkConnection();
 
-    // Set up periodic checking (every 30 seconds)
-    const intervalId = setInterval(checkConnection, 30000);
+    // Set up periodic checking (every 10 seconds)
+    const intervalId = setInterval(checkConnection, 10000);
 
     return () => {
       clearInterval(intervalId);
@@ -61,7 +82,7 @@ export default function NetworkStatus({ selectedNode }) {
       ) : (
         <WifiOff size={16} className="text-red-400" />
       )}
-      
+
       {/* Hover tooltip with node info */}
       <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 w-48 bg-gray-800 rounded-md p-2 text-xs shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200">
         <div className="flex items-center space-x-1 mb-1 text-gray-300">

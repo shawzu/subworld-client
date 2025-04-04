@@ -76,15 +76,7 @@ export default function NodeSelector({ onNodeSelect, currentNode }) {
           apiAddress: 'http://93.4.27.35:8081', // API port
           isOnline: false,
           isBootstrap: true,
-          description: 'Primary bootstrap node'
-        },
-        { 
-          id: 'node1', 
-          name: 'Network Node', 
-          address: 'http://37.170.71.188:8080', // P2P port
-          apiAddress: 'http://37.170.71.188:8081', // API port
-          isOnline: false,
-          description: 'Regular node'
+          description: 'Primary bootstrap node (93.4.27.35)'
         },
         ...(currentNode && !currentNode.address.includes('localhost') ? [{
           id: 'current',

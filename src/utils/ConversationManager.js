@@ -15,7 +15,7 @@ class ConversationManager {
     this.initialized = false
     this.currentUserKey = null
     this._lastFetchTime = 0 // Rate limiting
-    this.disableAutoFetch = true // EMERGENCY: disable auto-fetching
+    this.disableAutoFetch = false // Auto-fetching enabled with rate limiting
   }
   
   /**
