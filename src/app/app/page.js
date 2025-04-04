@@ -80,11 +80,11 @@ export default function App() {
         // Initialize other services (with checks)
         if (conversationManager) {
           await conversationManager.initialize(keyPair.publicKeyDisplay);
-          
+
           // Get conversation previews directly instead of calling loadConversations
           const conversationPreviews = conversationManager.getConversationPreviews();
           setConversations(conversationPreviews);
-          
+
           // Fetch messages on initial load, but don't do automatic fetching
           try {
             await fetchNewMessages();
@@ -132,7 +132,7 @@ export default function App() {
 
       fetchNewMessages.lastFetchTime = now;
       setRefreshing(true);
-      
+
       const newMessageCount = await conversationManager.fetchNewMessages();
 
       // Update conversation list directly
@@ -178,6 +178,14 @@ export default function App() {
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, [])
+
+  // Load conversations from the conversation manager
+  const loadConversations = () => {
+    if (conversationManager) {
+      const conversationPreviews = conversationManager.getConversationPreviews();
+      setConversations(conversationPreviews);
+    }
+  };
 
   // Update current messages when selected conversation changes
   useEffect(() => {
@@ -273,7 +281,7 @@ export default function App() {
       try {
         // Update UI immediately
         setSelectedNode(node);
-        
+
         // Update the network service (don't wait for completion)
         subworldNetwork.setCurrentNode(node)
           .then(updatedNode => {
@@ -284,10 +292,10 @@ export default function App() {
           })
           .catch(err => {
             console.error('Error setting current node:', err);
- 
+
           });
-          
- 
+
+
         setTimeout(() => {
           fetchNewMessages().catch(err => {
             console.error('Error fetching messages with new node:', err);
@@ -778,7 +786,7 @@ export default function App() {
                       </div>
                     </div>
 
-                    
+
                   </div>
                 </div>
               </div>

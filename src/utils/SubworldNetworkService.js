@@ -558,6 +558,20 @@ class SubworldNetworkService {
       }
       // Check if response is an object with a messages array
       else if (responseData && typeof responseData === 'object') {
+        // Check if this is an empty response or "no messages" response
+        if (
+          // Common "no messages" responses
+          responseData.status === 'success' || 
+          responseData.status === 'ok' || 
+          responseData.code === 200 ||
+          responseData.message === 'No messages found' ||
+          responseData.result === 'empty'
+        ) {
+          console.log('No messages available response:', JSON.stringify(responseData).substring(0, 200));
+          // Return empty array - this is not an error
+          return [];
+        }
+        
         // Try different common property names for messages
         if (Array.isArray(responseData.messages)) {
           messages = responseData.messages;
@@ -569,7 +583,7 @@ class SubworldNetworkService {
           messages = responseData.items;
         } else {
           // Log the actual response structure for debugging
-          console.warn('Unexpected response structure:', JSON.stringify(responseData).substring(0, 200) + '...');
+          console.log('Unexpected response structure:', JSON.stringify(responseData).substring(0, 200) + '...');
 
           // As a last resort, try to extract array-like properties from the object
           const possibleArrays = Object.values(responseData).filter(val => Array.isArray(val));
@@ -580,25 +594,13 @@ class SubworldNetworkService {
 
             console.log('Extracted possible messages array with', messages.length, 'items');
           } else {
-            // If all else fails, check if the object might be iterable
-            try {
-              messages = Object.values(responseData).filter(val =>
-                val && typeof val === 'object');
-
-              if (messages.length > 0) {
-                console.log('Created messages array from object properties:', messages.length, 'items');
-              } else {
-                console.error('Could not extract messages array from response');
-                return [];
-              }
-            } catch (extractError) {
-              console.error('Error extracting messages:', extractError);
-              return [];
-            }
+            // If all else fails, assume it's an empty response
+            console.log('No message arrays found in response, assuming empty messages list');
+            return [];
           }
         }
       } else {
-        console.error('Invalid messages response format:', typeof responseData);
+        console.log('Unexpected response format:', typeof responseData, 'assuming empty messages');
         return [];
       }
 
