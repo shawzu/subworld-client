@@ -139,6 +139,8 @@ class ConversationManager {
         timestamp: new Date().toISOString(),
         status: 'sent'
       }
+
+      console.log('Message sent:', message)
       
       // Add to conversation
       conversation.messages.push(message)

@@ -36,9 +36,9 @@ class LocalKeyStorageManager {
       const publicKeyDisplay = this.formatHashForDisplay(publicKeyHash.slice(0, 16));
       const privateKeyDisplay = this.createShortPrivateKey(privateKey);
 
-      return { 
-        privateKey, 
-        publicKeyDisplay, 
+      return {
+        privateKey,
+        publicKeyDisplay,
         privateKeyDisplay,
         publicKeyHash
       };
@@ -59,7 +59,7 @@ class LocalKeyStorageManager {
       const publicKeyHash = await this.hashString(privateKey);
       const publicKeyDisplay = this.formatHashForDisplay(publicKeyHash.slice(0, 16));
       const privateKeyDisplay = this.createShortPrivateKey(privateKey);
-      
+
       return {
         privateKey,
         publicKeyDisplay,
@@ -133,14 +133,14 @@ class LocalKeyStorageManager {
   static saveKeyPair(keyInfo) {
     try {
       if (typeof window === 'undefined') return false;
-      
+
       const encryptedPrivateKey = this.simpleEncrypt(keyInfo.privateKey);
 
       localStorage.setItem('subworld_private_key', encryptedPrivateKey);
       localStorage.setItem('subworld_public_key_display', keyInfo.publicKeyDisplay);
       localStorage.setItem('subworld_private_key_display', keyInfo.privateKeyDisplay);
       localStorage.setItem('subworld_public_key_hash', keyInfo.publicKeyHash);
-      
+
       return true;
     } catch (error) {
       console.error('Error saving keys:', error);
@@ -155,7 +155,7 @@ class LocalKeyStorageManager {
   static getKeyPair() {
     try {
       if (typeof window === 'undefined') return null;
-      
+
       const encryptedPrivateKey = localStorage.getItem('subworld_private_key');
       const publicKeyDisplay = localStorage.getItem('subworld_public_key_display');
       const privateKeyDisplay = localStorage.getItem('subworld_private_key_display');
@@ -167,7 +167,7 @@ class LocalKeyStorageManager {
 
       const privateKey = this.simpleDecrypt(encryptedPrivateKey);
 
-      return { 
+      return {
         privateKey,
         publicKeyDisplay,
         privateKeyDisplay,
@@ -186,7 +186,7 @@ class LocalKeyStorageManager {
   static deleteKeyPair() {
     try {
       if (typeof window === 'undefined') return false;
-      
+
       localStorage.removeItem('subworld_private_key');
       localStorage.removeItem('subworld_public_key_display');
       localStorage.removeItem('subworld_private_key_display');
@@ -204,7 +204,7 @@ class LocalKeyStorageManager {
    * @returns {string} Encrypted text
    */
   static simpleEncrypt(text) {
-    return btoa(text.split('').map(char => 
+    return btoa(text.split('').map(char =>
       String.fromCharCode(char.charCodeAt(0) + 1)
     ).join(''));
   }
@@ -215,7 +215,7 @@ class LocalKeyStorageManager {
    * @returns {string} Decrypted text
    */
   static simpleDecrypt(encrypted) {
-    return atob(encrypted).split('').map(char => 
+    return atob(encrypted).split('').map(char =>
       String.fromCharCode(char.charCodeAt(0) - 1)
     ).join('');
   }
@@ -248,12 +248,6 @@ class LocalKeyStorageManager {
     return bytes.buffer;
   }
 
-  /**
-   * Encrypt a message for a recipient
-   * @param {string} message - Message to encrypt
-   * @param {string} recipientPublicKeyHash - Recipient's public key hash
-   * @returns {Promise<string>} Encrypted message
-   */
   static async encryptMessage(message, recipientPublicKeyHash) {
     try {
       // Convert message to bytes
@@ -261,10 +255,9 @@ class LocalKeyStorageManager {
       const messageBytes = encoder.encode(message);
       
       // Create a key from the recipient's public key hash
-      // We use a consistent approach that will be reversible
       const keyBytes = this.generateKeyBytesFromHash(recipientPublicKeyHash);
       
-      // XOR encryption
+      // XOR encryption - FIXED: make sure to encrypt ALL bytes properly
       const encryptedBytes = new Uint8Array(messageBytes.length);
       for (let i = 0; i < messageBytes.length; i++) {
         encryptedBytes[i] = messageBytes[i] ^ keyBytes[i % keyBytes.length];
@@ -278,15 +271,9 @@ class LocalKeyStorageManager {
     }
   }
 
-  /**
-   * Decrypt a message using the private key
-   * @param {string} encryptedMessage - Encrypted message
-   * @param {string} privateKey - User's private key
-   * @returns {Promise<string>} Decrypted message
-   */
   static async decryptMessage(encryptedMessage, privateKey) {
     try {
-      // Get our public key hash from private key - this matches what others use to encrypt to us
+      // Get our public key hash from private key
       const publicKeyHash = await this.hashString(privateKey);
       
       // Convert encrypted message from base64 to bytes
@@ -320,7 +307,7 @@ class LocalKeyStorageManager {
     // Convert hex hash to bytes
     const keyBytes = new Uint8Array(hash.length / 2);
     for (let i = 0; i < hash.length; i += 2) {
-      keyBytes[i/2] = parseInt(hash.substring(i, i + 2), 16);
+      keyBytes[i / 2] = parseInt(hash.substring(i, i + 2), 16);
     }
     return keyBytes;
   }
