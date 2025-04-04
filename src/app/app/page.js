@@ -80,8 +80,17 @@ export default function App() {
         // Initialize other services (with checks)
         if (conversationManager) {
           await conversationManager.initialize(keyPair.publicKeyDisplay);
-          loadConversations();
-          await fetchNewMessages();
+          
+          // Get conversation previews directly instead of calling loadConversations
+          const conversationPreviews = conversationManager.getConversationPreviews();
+          setConversations(conversationPreviews);
+          
+          // Fetch messages on initial load, but don't do automatic fetching
+          try {
+            await fetchNewMessages();
+          } catch (err) {
+            console.error('Error fetching initial messages:', err);
+          }
         } else {
           setConversations([]); // Empty fallback
         }
@@ -94,7 +103,7 @@ export default function App() {
       }
     };
 
-    initializeApp()
+    initializeApp();
 
     // Clean up on unmount
     return () => {
@@ -104,37 +113,31 @@ export default function App() {
     }
   }, [])
 
-  // Handler for node selection
-  const handleNodeSelect = (node) => {
-    if (subworldNetwork) {
-      subworldNetwork.setCurrentNode(node);
-      setSelectedNode(node);
-
-      // Refresh data with the new node
-      fetchNewMessages().catch(err => {
-        console.error('Error fetching messages with new node:', err);
-      });
-    }
-  }
-
-  // Load conversations from the conversation manager
-  const loadConversations = () => {
-    if (!conversationManager) return;
-
-    const conversationPreviews = conversationManager.getConversationPreviews();
-    setConversations(conversationPreviews);
-  }
-
-  // Fetch new messages from the network
+  // Modified fetchNewMessages function with rate limiting
   const fetchNewMessages = async () => {
     try {
-      if (!subworldNetwork || !conversationManager) return;
+      if (!subworldNetwork || !conversationManager) return 0;
 
+      // Static variable to track last fetch time
+      if (!fetchNewMessages.lastFetchTime) {
+        fetchNewMessages.lastFetchTime = 0;
+      }
+
+      // Rate limiting - only fetch every 30 seconds at most
+      const now = Date.now();
+      if (now - fetchNewMessages.lastFetchTime < 30000) { // 30 seconds
+        console.log('Message fetch rate limited - too soon since last fetch');
+        return 0;
+      }
+
+      fetchNewMessages.lastFetchTime = now;
       setRefreshing(true);
+      
       const newMessageCount = await conversationManager.fetchNewMessages();
 
-      // Update conversation list
-      loadConversations();
+      // Update conversation list directly
+      const conversationPreviews = conversationManager.getConversationPreviews();
+      setConversations(conversationPreviews);
 
       // Update current conversation messages if needed
       if (selectedConversation) {
@@ -153,9 +156,11 @@ export default function App() {
       }
 
       setRefreshing(false);
+      return newMessageCount;
     } catch (error) {
       console.error('Error fetching messages:', error);
       setRefreshing(false);
+      return 0;
     }
   }
 
@@ -260,6 +265,39 @@ export default function App() {
       console.log('File uploaded:', file.name);
       // For future implementation: encrypt and send file
       alert('File sharing will be implemented in a future update.');
+    }
+  }
+
+  const handleNodeSelect = (node) => {
+    if (subworldNetwork) {
+      try {
+        // Update UI immediately
+        setSelectedNode(node);
+        
+        // Update the network service (don't wait for completion)
+        subworldNetwork.setCurrentNode(node)
+          .then(updatedNode => {
+            // If needed, you can update with the returned node info
+            if (updatedNode && updatedNode !== node) {
+              setSelectedNode(updatedNode);
+            }
+          })
+          .catch(err => {
+            console.error('Error setting current node:', err);
+ 
+          });
+          
+ 
+        setTimeout(() => {
+          fetchNewMessages().catch(err => {
+            console.error('Error fetching messages with new node:', err);
+          });
+        }, 1000);
+      } catch (error) {
+        console.error('Error in handleNodeSelect:', error);
+        // Still update UI even if there's an error
+        setSelectedNode(node);
+      }
     }
   }
 
@@ -740,26 +778,7 @@ export default function App() {
                       </div>
                     </div>
 
-                    <div className="rounded-2xl border border-gray-700 bg-gray-800/80 p-6 backdrop-blur-sm shadow-lg">
-                      <h3 className="text-lg font-semibold mb-4 text-blue-400">App Information</h3>
-
-                      <div className="space-y-3">
-                        <div className="flex justify-between items-center text-sm">
-                          <span className="text-gray-400">Version</span>
-                          <span className="text-white">1.0.0</span>
-                        </div>
-
-                        <div className="flex justify-between items-center text-sm">
-                          <span className="text-gray-400">Built with</span>
-                          <span className="text-white">Next.js & Subworld</span>
-                        </div>
-
-                        <div className="flex justify-between items-center text-sm">
-                          <span className="text-gray-400">Encryption</span>
-                          <span className="text-white">End-to-End</span>
-                        </div>
-                      </div>
-                    </div>
+                    
                   </div>
                 </div>
               </div>

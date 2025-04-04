@@ -8,64 +8,44 @@ export default function NodeSelector({ onNodeSelect, currentNode }) {
   const [nodes, setNodes] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+  const [lastFetch, setLastFetch] = useState(0)
+  const [fetchCooldown, setFetchCooldown] = useState(false)
 
-  // Fetch available nodes from network
+  // Fetch available nodes from network with rate limiting
   const fetchNodes = async () => {
+    // Rate limiting to prevent excessive API calls
+    const now = Date.now();
+    if (now - lastFetch < 30000) { // 30 second cooldown
+      if (!fetchCooldown) {
+        setFetchCooldown(true);
+        setTimeout(() => setFetchCooldown(false), 30000 - (now - lastFetch));
+      }
+      return;
+    }
+    
+    setLastFetch(now);
+    
     try {
-      setLoading(true)
-      setError(null)
+      setLoading(true);
+      setError(null);
       
       // Get nodes from network service
       const networkNodes = await subworldNetwork.fetchAvailableNodes();
       
-      // Check health of each node
-      const nodesWithStatus = await Promise.all(
-        networkNodes.map(async (node) => {
-          try {
-            // Skip health check if node already has status
-            if (node.isOnline !== undefined && node.latency !== undefined) {
-              return node;
-            }
-            
-            // Check node health
-            const healthCheck = await subworldNetwork.checkNodeHealth(node.address);
-            
-            return {
-              ...node,
-              isOnline: healthCheck.isOnline,
-              latency: healthCheck.latency
-            };
-          } catch (nodeError) {
-            // Ensure we return a valid node even if health check fails
-            return {
-              ...node,
-              isOnline: false,
-              latency: 999
-            };
-          }
-        })
-      );
-      
-      // Sort nodes: online first, then by latency
-      const sortedNodes = nodesWithStatus.sort((a, b) => {
+      // Sort nodes: current node first, then online nodes, then by name
+      const sortedNodes = networkNodes.sort((a, b) => {
         // Current node always first
         if (currentNode && a.address === currentNode.address) return -1;
         if (currentNode && b.address === currentNode.address) return 1;
         
-        // Then sort by online status
-        if (a.isOnline && !b.isOnline) return -1;
-        if (!a.isOnline && b.isOnline) return 1;
-        
-        // Then sort by latency
-        return a.latency - b.latency;
+        // Then sort by name
+        return a.name.localeCompare(b.name);
       });
       
       setNodes(sortedNodes);
-      setLoading(false);
     } catch (error) {
       console.error('Error fetching nodes:', error);
       setError('Failed to fetch nodes. Using default options.');
-      setLoading(false);
       
       // Fallback to default network nodes if fetch fails
       setNodes([
@@ -74,7 +54,7 @@ export default function NodeSelector({ onNodeSelect, currentNode }) {
           name: 'Bootstrap Node', 
           address: 'http://93.4.27.35:8080', // P2P port
           apiAddress: 'http://93.4.27.35:8081', // API port
-          isOnline: false,
+          isOnline: true,
           isBootstrap: true,
           description: 'Primary bootstrap node (93.4.27.35)'
         },
@@ -83,33 +63,35 @@ export default function NodeSelector({ onNodeSelect, currentNode }) {
           name: currentNode.name || 'Current Node',
           address: currentNode.address,
           apiAddress: currentNode.apiAddress || currentNode.address.replace(':8080', ':8081'),
-          isOnline: currentNode.isOnline,
-          latency: currentNode.latency
+          isOnline: true,
+          latency: 100
         }] : [])
       ]);
+    } finally {
+      setLoading(false);
     }
   }
 
-  // Fetch nodes on component mount
+  // Fetch nodes on component mount - only once
   useEffect(() => {
     fetchNodes();
     
-    // Set up periodic refresh every 2 minutes
-    const intervalId = setInterval(fetchNodes, 120000);
-    
-    return () => clearInterval(intervalId);
+    // No interval - only fetch on explicit refresh
+    return () => {};
   }, [currentNode]);
 
   // Handle node selection
-  const handleNodeSelect = async (node) => {
+  const handleNodeSelect = (node) => {
     try {
-      // Update node with current status
-      const updatedNode = await subworldNetwork.setCurrentNode(node);
-      onNodeSelect(updatedNode);
+      // Update the UI immediately - don't wait for health check
+      onNodeSelect(node);
+      
+      // Update the node in the network service (async)
+      subworldNetwork.setCurrentNode(node).catch(error => {
+        console.error('Error selecting node:', error);
+      });
     } catch (error) {
       console.error('Error selecting node:', error);
-      // Still update UI even if there's an error
-      onNodeSelect(node);
     }
   }
 
@@ -119,9 +101,9 @@ export default function NodeSelector({ onNodeSelect, currentNode }) {
         <h4 className="text-sm text-gray-300">Network nodes</h4>
         <button 
           onClick={fetchNodes} 
-          disabled={loading}
-          className={`p-1 rounded hover:bg-gray-700 ${loading ? 'animate-spin text-blue-400' : 'text-gray-400'}`}
-          title="Refresh node list"
+          disabled={loading || fetchCooldown}
+          className={`p-1 rounded hover:bg-gray-700 ${loading ? 'animate-spin text-blue-400' : fetchCooldown ? 'text-gray-600' : 'text-gray-400'}`}
+          title={fetchCooldown ? "Please wait before refreshing again" : "Refresh node list"}
         >
           <RefreshCw size={16} />
         </button>
@@ -146,6 +128,7 @@ export default function NodeSelector({ onNodeSelect, currentNode }) {
               key={node.id || node.address}
               className={`w-full p-3 text-left hover:bg-gray-700 flex items-start gap-3 rounded-lg transition-colors ${currentNode?.address === node.address ? 'bg-gray-700 border border-gray-600' : 'bg-gray-800 border border-transparent'}`}
               onClick={() => handleNodeSelect(node)}
+              disabled={loading}
             >
               <div className={`mt-0.5 w-3 h-3 rounded-full flex-shrink-0 ${node.isOnline ? 'bg-green-500' : 'bg-red-500'}`}></div>
               <div className="flex-1 min-w-0">
@@ -161,12 +144,6 @@ export default function NodeSelector({ onNodeSelect, currentNode }) {
                 {node.description && (
                   <div className="text-xs text-gray-500 mt-1">
                     {node.description}
-                  </div>
-                )}
-                {node.isOnline && (
-                  <div className="text-xs text-gray-500 mt-1 flex items-center">
-                    <Wifi size={10} className="mr-1 text-green-400" />
-                    Latency: {node.latency}ms
                   </div>
                 )}
                 {node.isBootstrap && (

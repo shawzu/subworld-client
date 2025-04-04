@@ -22,8 +22,20 @@ class SubworldNetworkService {
     // User information
     this.keyPair = null;
 
+    // Initialize health check cache
+    this.healthCheckCache = new Map();
+
     // Emergency flag to disable all automatic health checks
-    this.disableHealthChecks = false; // Enable health checks
+    this.disableHealthChecks = true; // CHANGED: Disabled health checks by default
+
+    // Rate limiting for API calls
+    this.lastNodeFetch = 0;
+    this.nodeFetchCooldown = 300000; // 5 minutes cooldown
+
+    // Cache for available nodes
+    this.availableNodesCache = null;
+    this.availableNodesCacheTime = 0;
+    this.nodeCacheLifetime = 600000; // 10 minutes
   }
 
   /**
@@ -75,7 +87,7 @@ class SubworldNetworkService {
   * Check node connection only when explicitly called - not automatic
   */
   async checkNodeConnection() {
-    // Just return true - we'll disable automatic checks
+    // Just return true - we've disabled automatic checks
     return true;
   }
 
@@ -85,6 +97,11 @@ class SubworldNetworkService {
    * @returns {Promise<{isOnline: boolean, latency: number}>}
    */
   async checkNodeHealth(nodeAddress) {
+    // CHANGED: Return early if health checks are disabled
+    if (this.disableHealthChecks) {
+      return { isOnline: true, latency: 100 };
+    }
+
     try {
       // Cache check - don't check the same node more than once per minute
       const now = Date.now();
@@ -183,7 +200,7 @@ class SubworldNetworkService {
 
       console.log('Setting current node:', updatedNode);
 
-      // Check node health if health checks are enabled
+      // Only perform a health check if explicitly enabled
       if (!this.disableHealthChecks) {
         try {
           const healthResult = await this.checkNodeHealth(updatedNode.apiAddress);
@@ -240,6 +257,59 @@ class SubworldNetworkService {
    * Get available nodes from the network
    */
   async fetchAvailableNodes() {
+    // CHANGED: Added rate limiting and caching
+    const now = Date.now();
+
+    // Return cached nodes if available and not expired
+    if (this.availableNodesCache && (now - this.availableNodesCacheTime < this.nodeCacheLifetime)) {
+      console.log('Using cached nodes list');
+      return this.availableNodesCache;
+    }
+
+    // Rate limiting
+    if (now - this.lastNodeFetch < this.nodeFetchCooldown) {
+      console.log('Node fetch rate limited, returning cached or default');
+
+      // Return cached nodes if available, otherwise default nodes
+      if (this.availableNodesCache) {
+        return this.availableNodesCache;
+      }
+
+      const defaultNodes = [
+        {
+          id: 'bootstrap1',
+          name: 'Bootstrap Node',
+          address: 'http://93.4.27.35:8080', // P2P port
+          apiAddress: 'http://93.4.27.35:8081', // API port
+          isBootstrap: true,
+          isOnline: true,
+          description: 'Primary bootstrap node (93.4.27.35)'
+        }
+      ];
+
+      // Add current node if available and not in the list
+      if (this.currentNode &&
+        !defaultNodes.some(n => n.address === this.currentNode.address) &&
+        !this.currentNode.address.includes('localhost') &&
+        !this.currentNode.address.includes('127.0.0.1')) {
+        defaultNodes.unshift({
+          id: 'current',
+          name: this.currentNode.name || 'Current Node',
+          address: this.currentNode.address,
+          apiAddress: this.currentNode.apiAddress || this.currentNode.address.replace(':8080', ':8081'),
+          isOnline: true,
+          latency: 100
+        });
+      }
+
+      this.availableNodesCache = defaultNodes;
+      this.availableNodesCacheTime = now;
+      return defaultNodes;
+    }
+
+    // Update the last fetch time
+    this.lastNodeFetch = now;
+
     try {
       // Try to get node list from current node
       if (!this.currentNode || !this.currentNode.address) {
@@ -252,10 +322,9 @@ class SubworldNetworkService {
           this.currentNode.address.replace(':8080', ':8081') :
           this.currentNode.address + ':8081');
 
-      const nodesEndpoint = `${apiAddress}/nodes/list`;
-      console.log('Fetching nodes from:', nodesEndpoint);
+      console.log('Fetching nodes from:', apiAddress + '/nodes/list');
 
-      const response = await fetch(nodesEndpoint, {
+      const response = await fetch(`${apiAddress}/nodes/list`, {
         method: 'GET',
         headers: { 'Content-Type': 'application/json' }
       });
@@ -273,7 +342,7 @@ class SubworldNetworkService {
         throw new Error('No nodes found in response');
       }
 
-      console.log(`Found ${data.nodes.length} nodes in response:`, data.nodes);
+      console.log(`Found ${data.nodes.length} nodes in response`);
 
       // Format nodes for the UI - using the exact response format from your API
       const nodeList = data.nodes.map(nodeAddress => {
@@ -282,8 +351,6 @@ class SubworldNetworkService {
           console.log(`Skipping localhost node: ${nodeAddress}`);
           return null;
         }
-
-        console.log(`Processing node: ${nodeAddress}`);
 
         // Generate a unique ID for each node
         const nodeId = nodeAddress.replace(/[^a-zA-Z0-9]/g, '');
@@ -324,12 +391,16 @@ class SubworldNetworkService {
         });
       }
 
+      // Cache the result
+      this.availableNodesCache = nodeList;
+      this.availableNodesCacheTime = now;
+
       return nodeList;
     } catch (error) {
       console.error('Error fetching nodes:', error);
 
       // Always return bootstrap node as fallback
-      return [
+      const fallbackNodes = [
         {
           id: 'bootstrap1',
           name: 'Bootstrap Node',
@@ -340,6 +411,26 @@ class SubworldNetworkService {
           description: 'Primary bootstrap node (93.4.27.35)'
         }
       ];
+
+      // Add current node if available and not in the list
+      if (this.currentNode &&
+        !this.currentNode.address.includes('localhost') &&
+        !this.currentNode.address.includes('127.0.0.1')) {
+        fallbackNodes.unshift({
+          id: 'current',
+          name: this.currentNode.name || 'Current Node',
+          address: this.currentNode.address,
+          apiAddress: this.currentNode.apiAddress || this.currentNode.address.replace(':8080', ':8081'),
+          isOnline: true,
+          latency: 100
+        });
+      }
+
+      // Cache the fallback nodes
+      this.availableNodesCache = fallbackNodes;
+      this.availableNodesCacheTime = now;
+
+      return fallbackNodes;
     }
   }
 
@@ -409,13 +500,19 @@ class SubworldNetworkService {
   }
 
   /**
-   * Fetch messages for the current user
-   * @returns {Promise<Array>} - Array of messages
-   */
+ * Fetch messages for the current user
+ * @returns {Promise<Array>} - Array of messages
+ */
   async fetchMessages() {
     try {
       if (!this.currentNode) {
-        throw new Error('No node selected');
+        console.warn('No node selected');
+        return [];
+      }
+
+      if (!this.keyPair || !this.keyPair.publicKeyDisplay) {
+        console.warn('No valid key pair');
+        return [];
       }
 
       // Use the API address (port 8081) for API calls
@@ -425,92 +522,158 @@ class SubworldNetworkService {
       console.log('Fetching messages for user:', this.keyPair.publicKeyDisplay);
 
       // Make GET request to fetch user messages
-      const response = await fetch(`${apiAddress}/messages/get?user_id=${this.keyPair.publicKeyDisplay}&fetch_remote=true`, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json'
-        }
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('Error fetching messages:', errorText);
-        throw new Error(`Failed to fetch messages: ${response.status}`);
+      let response;
+      try {
+        response = await fetch(`${apiAddress}/messages/get?user_id=${this.keyPair.publicKeyDisplay}&fetch_remote=true`, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        });
+      } catch (fetchError) {
+        console.error('Network error fetching messages:', fetchError);
+        return [];
       }
 
-      const messages = await response.json();
+      if (!response || !response.ok) {
+        const errorText = response ? await response.text() : 'No response';
+        console.error('Error fetching messages:', errorText);
+        return [];
+      }
+
+      let responseData;
+      try {
+        responseData = await response.json();
+      } catch (jsonError) {
+        console.error('Error parsing messages JSON:', jsonError);
+        return [];
+      }
+
+      // Handle different response formats
+      let messages = [];
+
+      // Check if response is an array directly
+      if (Array.isArray(responseData)) {
+        messages = responseData;
+      }
+      // Check if response is an object with a messages array
+      else if (responseData && typeof responseData === 'object') {
+        // Try different common property names for messages
+        if (Array.isArray(responseData.messages)) {
+          messages = responseData.messages;
+        } else if (Array.isArray(responseData.data)) {
+          messages = responseData.data;
+        } else if (Array.isArray(responseData.results)) {
+          messages = responseData.results;
+        } else if (Array.isArray(responseData.items)) {
+          messages = responseData.items;
+        } else {
+          // Log the actual response structure for debugging
+          console.warn('Unexpected response structure:', JSON.stringify(responseData).substring(0, 200) + '...');
+
+          // As a last resort, try to extract array-like properties from the object
+          const possibleArrays = Object.values(responseData).filter(val => Array.isArray(val));
+          if (possibleArrays.length > 0) {
+            // Use the largest array found
+            messages = possibleArrays.reduce((largest, current) =>
+              current.length > largest.length ? current : largest, []);
+
+            console.log('Extracted possible messages array with', messages.length, 'items');
+          } else {
+            // If all else fails, check if the object might be iterable
+            try {
+              messages = Object.values(responseData).filter(val =>
+                val && typeof val === 'object');
+
+              if (messages.length > 0) {
+                console.log('Created messages array from object properties:', messages.length, 'items');
+              } else {
+                console.error('Could not extract messages array from response');
+                return [];
+              }
+            } catch (extractError) {
+              console.error('Error extracting messages:', extractError);
+              return [];
+            }
+          }
+        }
+      } else {
+        console.error('Invalid messages response format:', typeof responseData);
+        return [];
+      }
+
       console.log('Received messages count:', messages.length);
 
       // Decrypt the messages
-      const decryptedMessages = await Promise.all(
-        messages.map(async (message) => {
-          try {
-            // Extract the message properties
-            const messageId = message.id || message.ID;
-            const senderId = message.sender_id || message.senderID;
-            const recipientId = message.recipient_id || message.recipientID;
-            const encryptedData = message.encrypted_data || message.encryptedData;
-            const timestamp = message.timestamp || new Date().toISOString();
+      const decryptedMessages = [];
+      for (let i = 0; i < messages.length; i++) {
+        try {
+          const message = messages[i];
+          if (!message) {
+            continue;
+          }
 
-            if (!encryptedData) {
-              return {
-                id: messageId,
-                sender: senderId,
-                recipient: recipientId,
-                content: '[No message content]',
-                timestamp: timestamp,
-                status: 'received'
-              };
-            }
+          // Extract the message properties
+          const messageId = message.id || message.ID || `unknown-${i}`;
+          const senderId = message.sender_id || message.senderID || 'unknown';
+          const recipientId = message.recipient_id || message.recipientID || this.keyPair.publicKeyDisplay;
+          const encryptedData = message.encrypted_data || message.encryptedData;
+          const timestamp = message.timestamp || new Date().toISOString();
 
-            // For messages sent by the current user, decrypt with recipient's key
-            // For messages received by the current user, decrypt with sender's key
-            let decryptionKey;
-
-            if (senderId === this.keyPair.publicKeyDisplay) {
-              // Message sent by current user
-              decryptionKey = recipientId;
-            } else {
-              // Message received by current user
-              decryptionKey = senderId;
-            }
-
-            console.log(`Decrypting message ${messageId} using key:`, decryptionKey);
-
-            const decryptedContent = await LocalKeyStorageManager.decryptMessage(
-              encryptedData,
-              decryptionKey
-            );
-
-            return {
+          if (!encryptedData) {
+            decryptedMessages.push({
               id: messageId,
               sender: senderId,
               recipient: recipientId,
-              content: decryptedContent,
+              content: '[No message content]',
               timestamp: timestamp,
-              status: message.delivered ? 'delivered' : 'received'
-            };
-          } catch (error) {
-            console.error('Error decrypting message:', error);
-            console.log('Failed message:', message);
-
-            return {
-              id: message.id || message.ID || `error-${Date.now()}`,
-              sender: message.sender_id || message.senderID || 'unknown',
-              recipient: message.recipient_id || message.recipientID || this.keyPair.publicKeyDisplay,
-              content: '[Encrypted message - Unable to decrypt]',
-              originalEncrypted: message.encrypted_data || message.encryptedData, // Keep for debugging
-              timestamp: message.timestamp || new Date().toISOString(),
-              status: 'error'
-            };
+              status: 'received'
+            });
+            continue;
           }
-        })
-      );
+
+          // For messages sent by the current user, decrypt with recipient's key
+          // For messages received by the current user, decrypt with sender's key
+          let decryptionKey;
+
+          if (senderId === this.keyPair.publicKeyDisplay) {
+            // Message sent by current user
+            decryptionKey = recipientId;
+          } else {
+            // Message received by current user
+            decryptionKey = senderId;
+          }
+
+          let decryptedContent;
+          try {
+            decryptedContent = await LocalKeyStorageManager.decryptMessage(
+              encryptedData,
+              decryptionKey
+            );
+          } catch (decryptError) {
+            console.error(`Failed to decrypt message ${messageId}:`, decryptError);
+            decryptedContent = '[Encrypted message - Unable to decrypt]';
+          }
+
+          decryptedMessages.push({
+            id: messageId,
+            sender: senderId,
+            recipient: recipientId,
+            content: decryptedContent,
+            timestamp: timestamp,
+            status: message.delivered ? 'delivered' : 'received'
+          });
+        } catch (messageError) {
+          console.error('Error processing message at index', i, ':', messageError);
+          // Continue processing other messages
+        }
+      }
 
       return decryptedMessages;
     } catch (error) {
-      console.error('Error fetching messages:', error);
-      throw error;
+      console.error('Error in fetchMessages:', error && error.message ? error.message : 'Unknown error');
+      // Return empty array instead of throwing
+      return [];
     }
   }
 
