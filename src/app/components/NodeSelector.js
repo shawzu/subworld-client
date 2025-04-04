@@ -1,115 +1,42 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { CheckCircle, AlertCircle, RefreshCw, Server } from 'lucide-react'
+import { CheckCircle, AlertCircle, RefreshCw, Server, Wifi, WifiOff } from 'lucide-react'
+import subworldNetwork from '../../utils/SubworldNetworkService'
 
 export default function NodeSelector({ onNodeSelect, currentNode }) {
   const [nodes, setNodes] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
-  const [bootstrapServer, setBootstrapServer] = useState('https://bootstrap.subworld.network')
 
-  // Fetch available nodes from bootstrap server
+  // Fetch available nodes from network
   const fetchNodes = async () => {
     try {
       setLoading(true)
       setError(null)
       
-      // Add default/fallback nodes
-      const defaultNodes = [
-        { 
-          id: 'local', 
-          name: 'Local Node', 
-          address: 'http://localhost:8001', 
-          isOnline: false,
-          description: 'Your local node (if running)'
-        },
-        { 
-          id: 'main1', 
-          name: 'Subworld Main 1', 
-          address: 'https://node1.subworld.network', 
-          isOnline: false,
-          description: 'Primary node'
-        },
-        { 
-          id: 'main2', 
-          name: 'Subworld Main 2', 
-          address: 'https://node2.subworld.network', 
-          isOnline: false,
-          description: 'Secondary node'
-        }
-      ]
-      
-      // Try to fetch from bootstrap server (with timeout)
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
-      
-      let fetchedNodes = [];
-      try {
-        // This inner try-catch will handle the fetch error without affecting the outer try-catch
-        const response = await fetch(`${bootstrapServer}/peers`, {
-          method: 'GET',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          signal: controller.signal
-        });
-        
-        if (response.ok) {
-          const data = await response.json();
-          fetchedNodes = data.peers || [];
-        }
-      } catch (fetchError) {
-        // Silently fail the fetch and use default nodes
-        console.log('Using default nodes, network fetch failed');
-      } finally {
-        clearTimeout(timeoutId);
-      }
-      
-      // Combine default nodes with any fetched nodes
-      let allNodes = [...defaultNodes];
-      if (fetchedNodes.length > 0) {
-        // Add fetched nodes that don't exist in defaults
-        fetchedNodes.forEach(node => {
-          if (!allNodes.find(n => n.address === node.address)) {
-            allNodes.push(node);
-          }
-        });
-      }
+      // Get nodes from network service
+      const networkNodes = await subworldNetwork.fetchAvailableNodes();
       
       // Check health of each node
       const nodesWithStatus = await Promise.all(
-        allNodes.map(async (node) => {
+        networkNodes.map(async (node) => {
           try {
-            // Health check with timeout
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 3000);
-            
-            let isOnline = false;
-            let latency = 999;
-            
-            try {
-              const startTime = Date.now();
-              const healthResponse = await fetch(`${node.address}/health`, {
-                method: 'GET',
-                signal: controller.signal
-              });
-              
-              isOnline = healthResponse.ok;
-              latency = isOnline ? Date.now() - startTime : 999;
-            } catch (healthError) {
-              // Silently fail health check
-            } finally {
-              clearTimeout(timeoutId);
+            // Skip health check if node already has status
+            if (node.isOnline !== undefined && node.latency !== undefined) {
+              return node;
             }
+            
+            // Check node health
+            const healthCheck = await subworldNetwork.checkNodeHealth(node.address);
             
             return {
               ...node,
-              isOnline,
-              latency
+              isOnline: healthCheck.isOnline,
+              latency: healthCheck.latency
             };
           } catch (nodeError) {
-            // Ensure we return a valid node even if any part fails
+            // Ensure we return a valid node even if health check fails
             return {
               ...node,
               isOnline: false,
@@ -121,40 +48,52 @@ export default function NodeSelector({ onNodeSelect, currentNode }) {
       
       // Sort nodes: online first, then by latency
       const sortedNodes = nodesWithStatus.sort((a, b) => {
+        // Current node always first
+        if (currentNode && a.address === currentNode.address) return -1;
+        if (currentNode && b.address === currentNode.address) return 1;
+        
+        // Then sort by online status
         if (a.isOnline && !b.isOnline) return -1;
         if (!a.isOnline && b.isOnline) return 1;
+        
+        // Then sort by latency
         return a.latency - b.latency;
       });
       
       setNodes(sortedNodes);
       setLoading(false);
     } catch (error) {
-      // Fallback to default nodes on any error
-      setError('Using default nodes');
+      console.error('Error fetching nodes:', error);
+      setError('Failed to fetch nodes. Using default options.');
       setLoading(false);
       
+      // Fallback to default network nodes if fetch fails
       setNodes([
         { 
-          id: 'local', 
-          name: 'Local Node', 
-          address: 'http://localhost:8001', 
+          id: 'bootstrap1', 
+          name: 'Bootstrap Node', 
+          address: 'http://93.4.27.35:8080', // P2P port
+          apiAddress: 'http://93.4.27.35:8081', // API port
           isOnline: false,
-          description: 'Your local node (if running)'
+          isBootstrap: true,
+          description: 'Primary bootstrap node'
         },
         { 
-          id: 'main1', 
-          name: 'Subworld Main 1', 
-          address: 'https://node1.subworld.network', 
+          id: 'node1', 
+          name: 'Network Node', 
+          address: 'http://37.170.71.188:8080', // P2P port
+          apiAddress: 'http://37.170.71.188:8081', // API port
           isOnline: false,
-          description: 'Primary node'
+          description: 'Regular node'
         },
-        { 
-          id: 'main2', 
-          name: 'Subworld Main 2', 
-          address: 'https://node2.subworld.network', 
-          isOnline: false,
-          description: 'Secondary node'
-        }
+        ...(currentNode && !currentNode.address.includes('localhost') ? [{
+          id: 'current',
+          name: currentNode.name || 'Current Node',
+          address: currentNode.address,
+          apiAddress: currentNode.apiAddress || currentNode.address.replace(':8080', ':8081'),
+          isOnline: currentNode.isOnline,
+          latency: currentNode.latency
+        }] : [])
       ]);
     }
   }
@@ -163,25 +102,22 @@ export default function NodeSelector({ onNodeSelect, currentNode }) {
   useEffect(() => {
     fetchNodes();
     
-    // Set up periodic refresh every 60 seconds
-    const intervalId = setInterval(fetchNodes, 60000);
+    // Set up periodic refresh every 2 minutes
+    const intervalId = setInterval(fetchNodes, 120000);
     
     return () => clearInterval(intervalId);
-  }, [bootstrapServer]);
+  }, [currentNode]);
 
   // Handle node selection
-  const handleNodeSelect = (node) => {
-    onNodeSelect(node);
-  }
-
-  // Set custom bootstrap server
-  const handleSetCustomBootstrap = (e) => {
-    e.preventDefault();
-    const customUrl = prompt('Enter custom bootstrap server URL:', bootstrapServer);
-    
-    if (customUrl && customUrl !== bootstrapServer) {
-      setBootstrapServer(customUrl);
-      // This will trigger the useEffect and refetch nodes
+  const handleNodeSelect = async (node) => {
+    try {
+      // Update node with current status
+      const updatedNode = await subworldNetwork.setCurrentNode(node);
+      onNodeSelect(updatedNode);
+    } catch (error) {
+      console.error('Error selecting node:', error);
+      // Still update UI even if there's an error
+      onNodeSelect(node);
     }
   }
 
@@ -222,7 +158,7 @@ export default function NodeSelector({ onNodeSelect, currentNode }) {
               <div className={`mt-0.5 w-3 h-3 rounded-full flex-shrink-0 ${node.isOnline ? 'bg-green-500' : 'bg-red-500'}`}></div>
               <div className="flex-1 min-w-0">
                 <div className="font-medium flex items-center text-sm">
-                  {node.name || node.address.split('//')[1]}
+                  {node.name || node.address.split('//')[1] || 'Unknown Node'}
                   {currentNode?.address === node.address && (
                     <CheckCircle size={14} className="ml-2 text-blue-400" />
                   )}
@@ -236,8 +172,14 @@ export default function NodeSelector({ onNodeSelect, currentNode }) {
                   </div>
                 )}
                 {node.isOnline && (
-                  <div className="text-xs text-gray-500 mt-1">
+                  <div className="text-xs text-gray-500 mt-1 flex items-center">
+                    <Wifi size={10} className="mr-1 text-green-400" />
                     Latency: {node.latency}ms
+                  </div>
+                )}
+                {node.isBootstrap && (
+                  <div className="text-xs text-blue-400 mt-1">
+                    Bootstrap Node
                   </div>
                 )}
               </div>
@@ -251,13 +193,6 @@ export default function NodeSelector({ onNodeSelect, currentNode }) {
           )}
         </div>
       )}
-      
-      <button 
-        onClick={handleSetCustomBootstrap}
-        className="w-full p-2 text-xs text-center text-gray-400 hover:text-white hover:bg-gray-700 rounded-lg transition-colors"
-      >
-        Set custom bootstrap server
-      </button>
     </div>
   )
 }

@@ -1,7 +1,8 @@
 'use client'
 
-import subworldNetwork from '../utils/SubworldNetworkService'
-import contactStore from '../utils/ContactStore'
+import subworldNetwork from './SubworldNetworkService'
+import contactStore from './ContactStore'
+import LocalKeyStorageManager from './LocalKeyStorageManager'
 
 /**
  * Manages conversations and messages
@@ -13,6 +14,8 @@ class ConversationManager {
     this.fetchInterval = null
     this.initialized = false
     this.currentUserKey = null
+    this._lastFetchTime = 0 // Rate limiting
+    this.disableAutoFetch = true // EMERGENCY: disable auto-fetching
   }
   
   /**
@@ -34,28 +37,23 @@ class ConversationManager {
       
       this.initialized = true
       
-      // Set up periodic fetching of new messages
-      this.startFetchInterval()
+      // DISABLED - no auto-fetching to reduce server load
+      // this.startFetchInterval()
+      
+      return true
     } catch (error) {
       console.error('Error initializing conversation manager:', error)
+      return false
     }
   }
   
   /**
-   * Start periodic fetching of new messages
+   * Start periodic fetching of new messages - DISABLED
    */
   startFetchInterval() {
-    // Clear any existing interval
-    if (this.fetchInterval) {
-      clearInterval(this.fetchInterval)
-    }
-    
-    // Set new interval (every 30 seconds)
-    this.fetchInterval = setInterval(() => {
-      this.fetchNewMessages().catch(err => {
-        console.error('Error fetching new messages:', err)
-      })
-    }, 30000) // 30 seconds
+    // EMERGENCY: Disabled to prevent excessive calls
+    console.log('Auto-fetching disabled to reduce server load');
+    return;
   }
   
   /**
@@ -165,19 +163,22 @@ class ConversationManager {
    */
   async fetchNewMessages() {
     try {
-      // Get last fetch time or default to some time ago
-      const since = this.lastFetch || new Date(Date.now() - 24 * 60 * 60 * 1000) // Default to 24h ago
+      // Rate limiting - only fetch messages every 30 seconds at most
+      const now = Date.now();
+      if (now - this._lastFetchTime < 30000) {
+        console.log('Skipping message fetch - fetched recently');
+        return 0;
+      }
+      this._lastFetchTime = now;
+      console.log('Fetching messages (rate limited)...');
       
-      // Fetch messages from network service
+      // Get messages from network service
       const messages = await subworldNetwork.fetchMessages()
       
       // Process new messages
       let newMessageCount = 0
       
       for (const message of messages) {
-        // Skip messages older than the last fetch time
-        if (new Date(message.timestamp) <= since) continue
-        
         // Determine the other party (sender if received, recipient if sent)
         const contactPublicKey = message.sender === this.currentUserKey 
           ? message.recipient 
@@ -201,6 +202,19 @@ class ConversationManager {
             conversation.unreadCount = (conversation.unreadCount || 0) + 1
             newMessageCount++
           }
+        }
+      }
+      
+      // Mark messages as delivered on the server if any were found
+      if (newMessageCount > 0) {
+        const messageIds = messages
+          .filter(m => m.sender !== this.currentUserKey)
+          .map(m => m.id)
+        
+        if (messageIds.length > 0) {
+          // Fire and forget - don't wait for this to complete
+          subworldNetwork.markMessagesAsDelivered(this.currentUserKey, messageIds)
+            .catch(err => console.log('Failed to mark messages as delivered:', err))
         }
       }
       
@@ -250,6 +264,9 @@ class ConversationManager {
         unreadCount: conversation.unreadCount || 0,
         isOnline: false // Would be determined by network connectivity
       }
+    }).sort((a, b) => {
+      // Sort by last message time, newest first
+      return new Date(b.lastMessageTime) - new Date(a.lastMessageTime)
     })
   }
   
@@ -322,3 +339,8 @@ class ConversationManager {
     this.stopFetchInterval()
   }
 }
+
+// Create singleton instance
+const conversationManager = new ConversationManager()
+
+export default conversationManager
