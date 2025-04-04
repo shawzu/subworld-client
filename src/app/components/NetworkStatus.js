@@ -9,71 +9,71 @@ export default function NetworkStatus({ selectedNode }) {
   const [nodeInfo, setNodeInfo] = useState(null)
   const [checking, setChecking] = useState(false)
 
-  // Check connection status periodically
-  useEffect(() => {
-    // Don't attempt checks if no node is selected
-    if (!selectedNode || !selectedNode.address) {
-      setIsConnected(false);
-      return;
-    }
-
-    const checkConnection = async () => {
-      // Skip if already performing a check
-      if (checking) return;
-
-      try {
-        setChecking(true);
-
-        // Use the API address with the /health endpoint
-        const apiAddress = selectedNode.apiAddress ||
-          (selectedNode.address.includes(':8080') ?
-            selectedNode.address.replace(':8080', ':8081') :
-            selectedNode.address);
-
-        const healthEndpoint = `${apiAddress}/health`;
-
-        // Check node health with a timeout
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 5000);
-
-        const response = await fetch(healthEndpoint, {
-          method: 'GET',
-          signal: controller.signal
-        });
-
-        clearTimeout(timeoutId);
-
-        if (response.ok) {
-          const healthData = await response.json();
-          setIsConnected(healthData.status === 'ok');
-
-          // If connected, try to get additional node info
-          const info = await subworldNetwork.getNodeInfo();
-          if (info) {
-            setNodeInfo(info);
-          }
-        } else {
-          setIsConnected(false);
-        }
-      } catch (error) {
-        // Silently handle errors
-        console.log('Health check failed:', error.message);
+    // Check connection status periodically
+    useEffect(() => {
+      // Don't attempt checks if no node is selected
+      if (!selectedNode || !selectedNode.address) {
         setIsConnected(false);
-      } finally {
-        setChecking(false);
+        return;
       }
-    };
-
-    // Initial check
-    checkConnection();
-
-    // Set up periodic checking (every 10 seconds)
-    const intervalId = setInterval(checkConnection, 10000);
-
-    return () => {
-      clearInterval(intervalId);
-    };
-  }, [selectedNode, checking]);
+  
+      const checkConnection = async () => {
+        // Skip if already performing a check
+        if (checking) return;
+        
+        try {
+          setChecking(true);
+          
+          // Use the API address with the /health endpoint
+          const apiAddress = selectedNode.apiAddress || 
+                            (selectedNode.address.includes(':8080') ? 
+                              selectedNode.address.replace(':8080', ':8081') : 
+                              selectedNode.address);
+                              
+          const healthEndpoint = `${apiAddress}/health`;
+          
+          // Check node health with a timeout
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 5000);
+          
+          const response = await fetch(healthEndpoint, {
+            method: 'GET',
+            signal: controller.signal
+          });
+          
+          clearTimeout(timeoutId);
+          
+          if (response.ok) {
+            const healthData = await response.json();
+            setIsConnected(healthData.status === 'ok');
+            
+            // If connected, try to get additional node info
+            const info = await subworldNetwork.getNodeInfo();
+            if (info) {
+              setNodeInfo(info);
+            }
+          } else {
+            setIsConnected(false);
+          }
+        } catch (error) {
+          // Silently handle errors
+          console.log('Health check failed:', error.message);
+          setIsConnected(false);
+        } finally {
+          setChecking(false);
+        }
+      };
+  
+      // Initial check
+      checkConnection();
+  
+      // Set up periodic checking (every 30 seconds instead of 10)
+      const intervalId = setInterval(checkConnection, 30000);
+  
+      return () => {
+        clearInterval(intervalId);
+      };
+    }, [selectedNode, checking]);
 
   return (
     <div className="flex items-center relative group">

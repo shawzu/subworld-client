@@ -30,6 +30,8 @@ class LocalKeyStorageManager {
       const privateKey = await this.exportPrivateKey(keyPair.privateKey);
 
       // Generate unique identifier from the private key
+      // For consistency, we'll compute the publicKeyHash from the privateKey
+      // This ensures that encryption/decryption will work properly
       const publicKeyHash = await this.hashString(privateKey);
       const publicKeyDisplay = this.formatHashForDisplay(publicKeyHash.slice(0, 16));
       const privateKeyDisplay = this.createShortPrivateKey(privateKey);
@@ -254,18 +256,22 @@ class LocalKeyStorageManager {
    */
   static async encryptMessage(message, recipientPublicKeyHash) {
     try {
+      // Convert message to bytes
       const encoder = new TextEncoder();
-      const data = encoder.encode(message);
+      const messageBytes = encoder.encode(message);
       
-      // Use the recipient's public key hash for encryption
-      const keyBytes = new TextEncoder().encode(recipientPublicKeyHash);
+      // Create a key from the recipient's public key hash
+      // We use a consistent approach that will be reversible
+      const keyBytes = this.generateKeyBytesFromHash(recipientPublicKeyHash);
       
-      const encrypted = new Uint8Array(data.length);
-      for (let i = 0; i < data.length; i++) {
-        encrypted[i] = data[i] ^ keyBytes[i % keyBytes.length];
+      // XOR encryption
+      const encryptedBytes = new Uint8Array(messageBytes.length);
+      for (let i = 0; i < messageBytes.length; i++) {
+        encryptedBytes[i] = messageBytes[i] ^ keyBytes[i % keyBytes.length];
       }
       
-      return this.arrayBufferToBase64(encrypted);
+      // Convert to base64 for transmission
+      return this.arrayBufferToBase64(encryptedBytes);
     } catch (error) {
       console.error('Encryption failed:', error);
       throw error;
@@ -280,26 +286,43 @@ class LocalKeyStorageManager {
    */
   static async decryptMessage(encryptedMessage, privateKey) {
     try {
-      // Derive the public key hash from the private key
+      // Get our public key hash from private key - this matches what others use to encrypt to us
       const publicKeyHash = await this.hashString(privateKey);
       
-      const encrypted = this.base64ToArrayBuffer(encryptedMessage);
-      const encryptedBytes = new Uint8Array(encrypted);
+      // Convert encrypted message from base64 to bytes
+      const encryptedBytes = new Uint8Array(this.base64ToArrayBuffer(encryptedMessage));
       
-      // Use the derived public key hash for decryption
-      const keyBytes = new TextEncoder().encode(publicKeyHash);
+      // Create the same key bytes that were used for encryption
+      const keyBytes = this.generateKeyBytesFromHash(publicKeyHash);
       
-      const decrypted = new Uint8Array(encryptedBytes.length);
+      // XOR decryption (same as encryption since XOR is symmetric)
+      const decryptedBytes = new Uint8Array(encryptedBytes.length);
       for (let i = 0; i < encryptedBytes.length; i++) {
-        decrypted[i] = encryptedBytes[i] ^ keyBytes[i % keyBytes.length];
+        decryptedBytes[i] = encryptedBytes[i] ^ keyBytes[i % keyBytes.length];
       }
       
+      // Convert bytes back to string
       const decoder = new TextDecoder();
-      return decoder.decode(decrypted);
+      return decoder.decode(decryptedBytes);
     } catch (error) {
       console.error('Decryption failed:', error);
       throw error;
     }
+  }
+  
+  /**
+   * Generate consistent key bytes from a hash string
+   * This ensures encryption and decryption use the same key
+   * @param {string} hash - Hash string (hex format)
+   * @returns {Uint8Array} - Key bytes for encryption/decryption
+   */
+  static generateKeyBytesFromHash(hash) {
+    // Convert hex hash to bytes
+    const keyBytes = new Uint8Array(hash.length / 2);
+    for (let i = 0; i < hash.length; i += 2) {
+      keyBytes[i/2] = parseInt(hash.substring(i, i + 2), 16);
+    }
+    return keyBytes;
   }
 }
 
