@@ -22,6 +22,9 @@ class SubworldNetworkService {
     // User information
     this.keyPair = null;
 
+    this.proxyBaseUrl = 'https://proxy.inhouses.xyz/api/';// Proxy base URL for API calls
+   
+
     // Initialize health check cache
     this.healthCheckCache = new Map();
 
@@ -257,24 +260,24 @@ class SubworldNetworkService {
    * Get available nodes from the network
    */
   async fetchAvailableNodes() {
-    // CHANGED: Added rate limiting and caching
+    // CHANGED: Added rate limiting and caching with proxy support
     const now = Date.now();
-
+  
     // Return cached nodes if available and not expired
     if (this.availableNodesCache && (now - this.availableNodesCacheTime < this.nodeCacheLifetime)) {
       console.log('Using cached nodes list');
       return this.availableNodesCache;
     }
-
+  
     // Rate limiting
     if (now - this.lastNodeFetch < this.nodeFetchCooldown) {
       console.log('Node fetch rate limited, returning cached or default');
-
+  
       // Return cached nodes if available, otherwise default nodes
       if (this.availableNodesCache) {
         return this.availableNodesCache;
       }
-
+  
       const defaultNodes = [
         {
           id: 'bootstrap1',
@@ -286,7 +289,7 @@ class SubworldNetworkService {
           description: 'Primary bootstrap node (93.4.27.35)'
         }
       ];
-
+  
       // Add current node if available and not in the list
       if (this.currentNode &&
         !defaultNodes.some(n => n.address === this.currentNode.address) &&
@@ -301,81 +304,40 @@ class SubworldNetworkService {
           latency: 100
         });
       }
-
+  
       this.availableNodesCache = defaultNodes;
       this.availableNodesCacheTime = now;
       return defaultNodes;
     }
-
+  
     // Update the last fetch time
     this.lastNodeFetch = now;
-
+  
     try {
-      // Try to get node list from current node
-      if (!this.currentNode || !this.currentNode.address) {
-        throw new Error('No node is selected');
-      }
-
-      // Use port 8081 for API calls
-      const apiAddress = this.currentNode.apiAddress ||
-        (this.currentNode.address.includes(':8080') ?
-          this.currentNode.address.replace(':8080', ':8081') :
-          this.currentNode.address + ':8081');
-
-      console.log('Fetching nodes from:', apiAddress + '/nodes/list');
-
-      const response = await fetch(`${apiAddress}/nodes/list`, {
+      // Use the proxy's nodes endpoint instead of direct node connection
+      console.log('Fetching nodes from proxy:', 'https://proxy.inhouses.xyz/nodes');
+      
+      const response = await fetch('https://proxy.inhouses.xyz/nodes', {
         method: 'GET',
         headers: { 'Content-Type': 'application/json' }
       });
-
+  
       if (!response.ok) {
         throw new Error(`Failed to fetch nodes: ${response.status}`);
       }
-
+  
       const data = await response.json();
-      console.log('Raw node data received:', data);
-
+      console.log('Nodes data received from proxy:', data);
+  
       // Make sure we have nodes to process
       if (!data.nodes || !Array.isArray(data.nodes) || data.nodes.length === 0) {
-        console.warn('No nodes found in response');
-        throw new Error('No nodes found in response');
+        console.warn('No nodes found in proxy response');
+        throw new Error('No nodes found in proxy response');
       }
-
-      console.log(`Found ${data.nodes.length} nodes in response`);
-
-      // Format nodes for the UI - using the exact response format from your API
-      const nodeList = data.nodes.map(nodeAddress => {
-        // Skip localhost nodes as requested
-        if (nodeAddress.includes('localhost') || nodeAddress.includes('127.0.0.1')) {
-          console.log(`Skipping localhost node: ${nodeAddress}`);
-          return null;
-        }
-
-        // Generate a unique ID for each node
-        const nodeId = nodeAddress.replace(/[^a-zA-Z0-9]/g, '');
-
-        // Check if it's a bootstrap node (based on IP from your example)
-        const isBootstrap = nodeAddress.includes('93.4.27.35');
-
-        // Extract the host (without port)
-        const parts = nodeAddress.split(':');
-        const host = parts[0];
-        const port = parts.length > 1 ? parts[1] : '8080';
-
-        // Create node object with the p2p port (8080) and API port (8081)
-        return {
-          id: nodeId,
-          name: isBootstrap ? `Bootstrap Node (${host})` : `Node (${host})`,
-          address: `http://${host}:${port}`, // P2P address (as received)
-          apiAddress: `http://${host}:8081`, // API address (always 8081)
-          isBootstrap: isBootstrap,
-          isOnline: true // Assume all nodes are online
-        };
-      }).filter(node => node !== null); // Remove null entries (localhost nodes)
-
-      console.log('Formatted node list:', nodeList);
-
+  
+      const nodeList = data.nodes;
+      console.log(`Found ${nodeList.length} nodes in proxy response`);
+  
       // Always include the current node if it's not in the list and not localhost
       if (this.currentNode &&
         !nodeList.some(node => node.address === this.currentNode.address) &&
@@ -390,15 +352,15 @@ class SubworldNetworkService {
           latency: 100
         });
       }
-
+  
       // Cache the result
       this.availableNodesCache = nodeList;
       this.availableNodesCacheTime = now;
-
+  
       return nodeList;
     } catch (error) {
-      console.error('Error fetching nodes:', error);
-
+      console.error('Error fetching nodes from proxy:', error);
+  
       // Always return bootstrap node as fallback
       const fallbackNodes = [
         {
@@ -411,7 +373,7 @@ class SubworldNetworkService {
           description: 'Primary bootstrap node (93.4.27.35)'
         }
       ];
-
+  
       // Add current node if available and not in the list
       if (this.currentNode &&
         !this.currentNode.address.includes('localhost') &&
@@ -425,11 +387,11 @@ class SubworldNetworkService {
           latency: 100
         });
       }
-
+  
       // Cache the fallback nodes
       this.availableNodesCache = fallbackNodes;
       this.availableNodesCacheTime = now;
-
+  
       return fallbackNodes;
     }
   }
@@ -445,16 +407,16 @@ class SubworldNetworkService {
       if (!this.currentNode) {
         throw new Error('No node selected');
       }
-
+  
       // Log for debugging
       console.log('Sending message to recipient:', recipientPublicKey);
-
+  
       // Encrypt the message with recipient's display key
       const encryptedData = await LocalKeyStorageManager.encryptMessage(
         content,
         recipientPublicKey
       );
-
+  
       // Prepare the message payload
       const message = {
         recipient_id: recipientPublicKey,
@@ -464,15 +426,14 @@ class SubworldNetworkService {
         timestamp: new Date().toISOString(),
         id: `msg-${Date.now()}`
       };
-
-      // Use the API address (port 8081) for API calls
-      const apiAddress = this.currentNode.apiAddress ||
-        this.currentNode.address.replace(':8080', ':8081');
-
-      console.log('Sending message to API:', apiAddress + '/messages/send');
-
+  
+      // Use proxy instead of direct node connection
+      const nodeId = this.currentNode.id || 'bootstrap1';
+  
+      console.log('Sending message via proxy:', `${this.proxyBaseUrl}${nodeId}/messages/send`);
+  
       // Send the message
-      const response = await fetch(`${apiAddress}/messages/send`, {
+      const response = await fetch(`${this.proxyBaseUrl}${nodeId}/messages/send`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -509,22 +470,21 @@ class SubworldNetworkService {
         console.warn('No node selected');
         return [];
       }
-
+  
       if (!this.keyPair || !this.keyPair.publicKeyDisplay) {
         console.warn('No valid key pair');
         return [];
       }
-
-      // Use the API address (port 8081) for API calls
-      const apiAddress = this.currentNode.apiAddress ||
-        this.currentNode.address.replace(':8080', ':8081');
-
+  
+      // Use proxy instead of direct node connection
+      const nodeId = this.currentNode.id || 'bootstrap1';
+      
       console.log('Fetching messages for user:', this.keyPair.publicKeyDisplay);
-
-      // Make GET request to fetch user messages
+  
+      // Make GET request to fetch user messages via proxy
       let response;
       try {
-        response = await fetch(`${apiAddress}/messages/get?user_id=${this.keyPair.publicKeyDisplay}&fetch_remote=true`, {
+        response = await fetch(`${this.proxyBaseUrl}${nodeId}/messages/get?user_id=${this.keyPair.publicKeyDisplay}&fetch_remote=true`, {
           method: 'GET',
           headers: {
             'Content-Type': 'application/json'
@@ -673,8 +633,7 @@ class SubworldNetworkService {
 
       return decryptedMessages;
     } catch (error) {
-      console.error('Error in fetchMessages:', error && error.message ? error.message : 'Unknown error');
-      // Return empty array instead of throwing
+      console.error('Error in fetchMessages:', error);
       return [];
     }
   }
@@ -690,46 +649,44 @@ class SubworldNetworkService {
       if (!this.currentNode) {
         throw new Error('No node selected');
       }
-
+  
       if (!messageIDs || messageIDs.length === 0) {
         console.log('No message IDs provided to mark as delivered');
         return false;
       }
-
-      // Use the API address (port 8081) for API calls
-      const apiAddress = this.currentNode.apiAddress ||
-        this.currentNode.address.replace(':8080', ':8081');
-
+  
+      // Use proxy instead of direct node connection
+      const nodeId = this.currentNode.id || 'bootstrap1';
+      
       console.log(`Marking ${messageIDs.length} messages as delivered for user ${userID}`);
-
+  
       // Prepare the request payload according to the API format
-      // The API expects snake_case for property names
       const payload = {
         user_id: userID,
         message_ids: messageIDs
       };
-
-      // Make POST request to mark messages as delivered
-      const response = await fetch(`${apiAddress}/messages/delivered`, {
+  
+      // Make POST request via proxy
+      const response = await fetch(`${this.proxyBaseUrl}${nodeId}/messages/delivered`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify(payload)
       });
-
+  
       if (!response.ok) {
         const errorData = await response.text();
         console.error('Failed to mark messages as delivered:', errorData);
         throw new Error(`Failed to mark messages as delivered: ${response.status}`);
       }
-
+  
       // Parse the response to confirm success
       const result = await response.json();
       console.log('Mark delivered response:', result);
-
+  
       return result.status === 'success';
-
+  
     } catch (error) {
       console.error('Error marking messages as delivered:', error);
       return false;

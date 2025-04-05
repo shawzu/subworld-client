@@ -436,28 +436,28 @@ class ConversationManager {
  * Persist conversations to localStorage
  * @private
  */
-_persistConversations() {
-  try {
-    // Make sure conversations is an array
-    if (!Array.isArray(this.conversations)) {
-      console.warn('Conversations is not an array, initializing empty array');
-      this.conversations = [];
+  _persistConversations() {
+    try {
+      // Make sure conversations is an array
+      if (!Array.isArray(this.conversations)) {
+        console.warn('Conversations is not an array, initializing empty array');
+        this.conversations = [];
+      }
+
+      // Filter out any invalid conversations
+      const cleanConversations = this.conversations.filter(conv => {
+        return conv && typeof conv === 'object';
+      });
+
+      // Only save if we have localStorage available
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem('subworld_conversations', JSON.stringify(cleanConversations));
+      }
+    } catch (error) {
+      console.error('Error persisting conversations:', error);
+      // Don't throw, just continue execution
     }
-    
-    // Filter out any invalid conversations
-    const cleanConversations = this.conversations.filter(conv => {
-      return conv && typeof conv === 'object';
-    });
-    
-    // Only save if we have localStorage available
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem('subworld_conversations', JSON.stringify(cleanConversations));
-    }
-  } catch (error) {
-    console.error('Error persisting conversations:', error);
-    // Don't throw, just continue execution
   }
-}
   /**
    * Delete message history and conversation
    * @param {string} contactPublicKey - Contact's public key
