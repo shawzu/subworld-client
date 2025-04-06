@@ -17,6 +17,7 @@ import subworldNetwork from '../../utils/SubworldNetworkService'
 import contactStore from '../../utils/ContactStore'
 import conversationManager from '../../utils/ConversationManager'
 import LocalKeyStorageManager from '../../utils/LocalKeyStorageManager'
+import ImageMessage from '../components/ImageMessage';
 
 export default function App() {
   const messagesEndRef = useRef(null)
@@ -35,6 +36,10 @@ export default function App() {
   const [hasNewMessages, setHasNewMessages] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [selectedNode, setSelectedNode] = useState(null)
+
+  const [selectedImage, setSelectedImage] = useState(null);
+  const [imageCaption, setImageCaption] = useState('');
+  const [showImagePreview, setShowImagePreview] = useState(false);
 
   // Scroll to bottom of message list
   const scrollToBottom = () => {
@@ -164,6 +169,64 @@ export default function App() {
     }
   }
 
+  const handleFileSelect = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      // Check if it's an image
+      if (!file.type.startsWith('image/')) {
+        alert('Please select an image file.');
+        return;
+      }
+
+      // Check file size (limit to 5MB)
+      if (file.size > 5 * 1024 * 1024) {
+        alert('Image is too large. Please select an image under 5MB.');
+        return;
+      }
+
+      setSelectedImage(file);
+      setShowImagePreview(true);
+    }
+  };
+
+  
+  const handleSendImage = async () => {
+    if (!selectedImage || !selectedConversation || !conversationManager) return;
+
+    try {
+      // Show loading state
+      setIsLoading(true);
+
+      // Send the image
+      await conversationManager.sendImage(
+        selectedConversation,
+        selectedImage,
+        imageCaption
+      );
+
+      // Reload conversation data
+      const conversation = conversationManager.getConversation(selectedConversation);
+      if (conversation) {
+        setCurrentMessages(conversation.messages.sort(
+          (a, b) => new Date(a.timestamp) - new Date(b.timestamp)
+        ));
+      }
+
+      // Refresh the conversation list
+      loadConversations();
+
+      // Clear the inputs
+      setSelectedImage(null);
+      setImageCaption('');
+      setShowImagePreview(false);
+    } catch (error) {
+      console.error('Failed to send image:', error);
+      alert('Failed to send image. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   // Handle screen resizing
   useEffect(() => {
     const handleResize = () => {
@@ -218,8 +281,12 @@ export default function App() {
     if (!message.trim() || !selectedConversation || !conversationManager) return;
 
     try {
+      // Disable form during sending to prevent double-sending
+      const currentMessage = message.trim();
+      setMessage(''); // Clear input immediately to prevent duplicate sends
+
       // Send the message using conversation manager
-      await conversationManager.sendMessage(selectedConversation, message.trim());
+      await conversationManager.sendMessage(selectedConversation, currentMessage);
 
       // Reload conversation data
       const conversation = conversationManager.getConversation(selectedConversation);
@@ -231,9 +298,6 @@ export default function App() {
 
       // Refresh the conversation list
       loadConversations();
-
-      // Clear the input
-      setMessage('');
     } catch (error) {
       console.error('Failed to send message:', error);
       alert('Failed to send message. Please try again.');
@@ -520,10 +584,19 @@ export default function App() {
                   ) : (
                     currentMessages.map((msg) => (
                       <div key={msg.id} className={`mb-6 ${msg.sender === publicKey ? 'text-right' : ''}`}>
-                        <div className={`inline-block p-3 px-5 rounded-2xl ${msg.sender === publicKey ? 'bg-blue-600' : 'bg-gray-800'}`}>
-                          {msg.content}
-                        </div>
-                        <div className="text-xs text-gray-500 mt-2">{formatMessageTime(msg.timestamp)}</div>
+                        {msg.isImage ? (
+                          <ImageMessage
+                            message={msg}
+                            formatMessageTime={formatMessageTime}
+                          />
+                        ) : (
+                          <>
+                            <div className={`inline-block p-3 px-5 rounded-2xl ${msg.sender === publicKey ? 'bg-blue-600' : 'bg-gray-800'}`}>
+                              {msg.content}
+                            </div>
+                            <div className="text-xs text-gray-500 mt-2">{formatMessageTime(msg.timestamp)}</div>
+                          </>
+                        )}
                       </div>
                     ))
                   )}
@@ -544,7 +617,8 @@ export default function App() {
                       <input
                         id="file-upload"
                         type="file"
-                        onChange={handleFileUpload}
+                        accept="image/*"
+                        onChange={handleFileSelect}
                         className="hidden"
                       />
                     </label>
@@ -558,6 +632,74 @@ export default function App() {
                   </div>
                 </form>
               </>
+            )}
+
+            {showImagePreview && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
+                <div className="bg-gray-800 rounded-lg p-6 max-w-md w-full">
+                  <div className="flex justify-between items-center mb-4">
+                    <h2 className="text-xl font-semibold">Send Image</h2>
+                    <button
+                      onClick={() => {
+                        setShowImagePreview(false);
+                        setSelectedImage(null);
+                        setImageCaption('');
+                      }}
+                      className="text-gray-400 hover:text-white"
+                    >
+                      <X size={24} />
+                    </button>
+                  </div>
+
+                  <div className="mb-4">
+                    <img
+                      src={URL.createObjectURL(selectedImage)}
+                      alt="Preview"
+                      className="w-full h-40 object-contain bg-gray-700 rounded"
+                    />
+                  </div>
+
+                  <div className="mb-4">
+                    <input
+                      type="text"
+                      value={imageCaption}
+                      onChange={(e) => setImageCaption(e.target.value)}
+                      placeholder="Add a caption (optional)"
+                      className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+
+                  <div className="flex justify-end">
+                    <button
+                      onClick={() => {
+                        setShowImagePreview(false);
+                        setSelectedImage(null);
+                        setImageCaption('');
+                      }}
+                      className="px-4 py-2 bg-gray-700 text-white rounded-lg mr-2"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleSendImage}
+                      className="px-4 py-2 bg-blue-600 text-white rounded-lg flex items-center"
+                      disabled={isLoading}
+                    >
+                      {isLoading ? (
+                        <>
+                          <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-white mr-2"></div>
+                          Sending...
+                        </>
+                      ) : (
+                        <>
+                          <Send size={16} className="mr-2" />
+                          Send Image
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </div>
             )}
 
             {/* Profile Tab */}
