@@ -23,13 +23,13 @@ class SubworldNetworkService {
     this.keyPair = null;
 
     this.proxyBaseUrl = 'https://proxy.inhouses.xyz/api/';// Proxy base URL for API calls
-   
+
 
     // Initialize health check cache
     this.healthCheckCache = new Map();
 
     // Emergency flag to disable all automatic health checks
-    this.disableHealthChecks = true; // CHANGED: Disabled health checks by default
+    this.disableHealthChecks = false; 
 
     // Rate limiting for API calls
     this.lastNodeFetch = 0;
@@ -95,10 +95,10 @@ class SubworldNetworkService {
   }
 
   /**
-   * Check the health of a specific node
-   * @param {string} nodeAddress - The address of the node to check
-   * @returns {Promise<{isOnline: boolean, latency: number}>}
-   */
+ * Modified method to check a node's health via proxy by address
+ * @param {string} nodeAddress - The address of the node to check
+ * @returns {Promise<{isOnline: boolean, latency: number}>}
+ */
   async checkNodeHealth(nodeAddress) {
     // CHANGED: Return early if health checks are disabled
     if (this.disableHealthChecks) {
@@ -106,84 +106,43 @@ class SubworldNetworkService {
     }
 
     try {
-      // Cache check - don't check the same node more than once per minute
-      const now = Date.now();
-      const cacheKey = nodeAddress;
+      // First, try to find the node ID corresponding to this address
+      let nodeId = null;
 
-      if (this.healthCheckCache.has(cacheKey)) {
-        const cached = this.healthCheckCache.get(cacheKey);
-        // If checked in the last 60 seconds, return cached result
-        if (now - cached.timestamp < 60000) {
-          console.log(`Using cached health check for ${nodeAddress}`);
-          return {
-            isOnline: cached.isOnline,
-            latency: cached.latency
-          };
+      // Check if it's the current node
+      if (this.currentNode && this.currentNode.address === nodeAddress) {
+        nodeId = this.currentNode.id || 'bootstrap1';
+      } else {
+        // Try to find it in the available nodes
+        if (this.availableNodesCache) {
+          const matchingNode = this.availableNodesCache.find(n => n.address === nodeAddress);
+          if (matchingNode) {
+            nodeId = matchingNode.id;
+          }
+        }
+
+        // If not found, use a fallback based on the address
+        if (!nodeId) {
+          // Create a simplified ID from the address
+          nodeId = nodeAddress
+            .replace(/^https?:\/\//, '')
+            .replace(/[.:]/g, '-');
         }
       }
 
-      // Extract or use the API address (port 8081) for health checks
-      const apiAddress = nodeAddress.includes(':8081') ?
-        nodeAddress :
-        (nodeAddress.includes(':8080') ?
-          nodeAddress.replace(':8080', ':8081') :
-          nodeAddress + ':8081');
-
-      const healthEndpoint = `${apiAddress}/health`;
-      console.log(`Checking node health: ${healthEndpoint}`);
-
-      // Measure latency
-      const startTime = Date.now();
-
-      // Add timeout to the fetch request
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
-
-      const response = await fetch(healthEndpoint, {
-        method: 'GET',
-        signal: controller.signal
-      });
-
-      clearTimeout(timeoutId);
-
-      const latency = Date.now() - startTime;
-      let result;
-
-      if (response.ok) {
-        const data = await response.json();
-        result = {
-          isOnline: data.status === 'ok',
-          latency: latency
-        };
-      } else {
-        result = { isOnline: false, latency: 999 };
-      }
-
-      // Cache the result
-      this.healthCheckCache.set(cacheKey, {
-        ...result,
-        timestamp: now
-      });
-
-      return result;
+      // Use the proxy-based health check with the node ID
+      return await this.checkNodeHealthViaProxy(nodeId);
     } catch (error) {
       console.error('Health check failed:', error);
-
-      // Cache the failure to avoid repeated failed attempts
-      this.healthCheckCache.set(nodeAddress, {
-        isOnline: false,
-        latency: 999,
-        timestamp: Date.now()
-      });
-
       return { isOnline: false, latency: 999 };
     }
   }
 
+
   /**
-   * Set the current node to use for API calls
-   * @param {Object} node - Node object with address and other details
-   */
+ * Set the current node to use for API calls with health check via proxy
+ * @param {Object} node - Node object with address and other details
+ */
   async setCurrentNode(node) {
     try {
       // Ensure the node has both P2P and API addresses
@@ -203,15 +162,16 @@ class SubworldNetworkService {
 
       console.log('Setting current node:', updatedNode);
 
-      // Only perform a health check if explicitly enabled
+      // Only perform a health check if explicitly enabled, but use proxy-based method
       if (!this.disableHealthChecks) {
         try {
-          const healthResult = await this.checkNodeHealth(updatedNode.apiAddress);
+          const nodeId = updatedNode.id || 'bootstrap1';
+          const healthResult = await this.checkNodeHealthViaProxy(nodeId);
           updatedNode.isOnline = healthResult.isOnline;
           updatedNode.latency = healthResult.latency;
           this.isConnected = healthResult.isOnline;
         } catch (error) {
-          console.error('Health check failed during node selection:', error);
+          console.error('Health check via proxy failed during node selection:', error);
           updatedNode.isOnline = false;
           updatedNode.latency = 999;
           this.isConnected = false;
@@ -262,22 +222,22 @@ class SubworldNetworkService {
   async fetchAvailableNodes() {
     // CHANGED: Added rate limiting and caching with proxy support
     const now = Date.now();
-  
+
     // Return cached nodes if available and not expired
     if (this.availableNodesCache && (now - this.availableNodesCacheTime < this.nodeCacheLifetime)) {
       console.log('Using cached nodes list');
       return this.availableNodesCache;
     }
-  
+
     // Rate limiting
     if (now - this.lastNodeFetch < this.nodeFetchCooldown) {
       console.log('Node fetch rate limited, returning cached or default');
-  
+
       // Return cached nodes if available, otherwise default nodes
       if (this.availableNodesCache) {
         return this.availableNodesCache;
       }
-  
+
       const defaultNodes = [
         {
           id: 'bootstrap1',
@@ -289,7 +249,7 @@ class SubworldNetworkService {
           description: 'Primary bootstrap node (93.4.27.35)'
         }
       ];
-  
+
       // Add current node if available and not in the list
       if (this.currentNode &&
         !defaultNodes.some(n => n.address === this.currentNode.address) &&
@@ -304,40 +264,40 @@ class SubworldNetworkService {
           latency: 100
         });
       }
-  
+
       this.availableNodesCache = defaultNodes;
       this.availableNodesCacheTime = now;
       return defaultNodes;
     }
-  
+
     // Update the last fetch time
     this.lastNodeFetch = now;
-  
+
     try {
       // Use the proxy's nodes endpoint instead of direct node connection
       console.log('Fetching nodes from proxy:', 'https://proxy.inhouses.xyz/nodes');
-      
+
       const response = await fetch('https://proxy.inhouses.xyz/nodes', {
         method: 'GET',
         headers: { 'Content-Type': 'application/json' }
       });
-  
+
       if (!response.ok) {
         throw new Error(`Failed to fetch nodes: ${response.status}`);
       }
-  
+
       const data = await response.json();
       console.log('Nodes data received from proxy:', data);
-  
+
       // Make sure we have nodes to process
       if (!data.nodes || !Array.isArray(data.nodes) || data.nodes.length === 0) {
         console.warn('No nodes found in proxy response');
         throw new Error('No nodes found in proxy response');
       }
-  
+
       const nodeList = data.nodes;
       console.log(`Found ${nodeList.length} nodes in proxy response`);
-  
+
       // Always include the current node if it's not in the list and not localhost
       if (this.currentNode &&
         !nodeList.some(node => node.address === this.currentNode.address) &&
@@ -352,15 +312,15 @@ class SubworldNetworkService {
           latency: 100
         });
       }
-  
+
       // Cache the result
       this.availableNodesCache = nodeList;
       this.availableNodesCacheTime = now;
-  
+
       return nodeList;
     } catch (error) {
       console.error('Error fetching nodes from proxy:', error);
-  
+
       // Always return bootstrap node as fallback
       const fallbackNodes = [
         {
@@ -373,7 +333,7 @@ class SubworldNetworkService {
           description: 'Primary bootstrap node (93.4.27.35)'
         }
       ];
-  
+
       // Add current node if available and not in the list
       if (this.currentNode &&
         !this.currentNode.address.includes('localhost') &&
@@ -387,11 +347,11 @@ class SubworldNetworkService {
           latency: 100
         });
       }
-  
+
       // Cache the fallback nodes
       this.availableNodesCache = fallbackNodes;
       this.availableNodesCacheTime = now;
-  
+
       return fallbackNodes;
     }
   }
@@ -407,16 +367,16 @@ class SubworldNetworkService {
       if (!this.currentNode) {
         throw new Error('No node selected');
       }
-  
+
       // Log for debugging
       console.log('Sending message to recipient:', recipientPublicKey);
-  
+
       // Encrypt the message with recipient's display key
       const encryptedData = await LocalKeyStorageManager.encryptMessage(
         content,
         recipientPublicKey
       );
-  
+
       // Prepare the message payload
       const message = {
         recipient_id: recipientPublicKey,
@@ -426,12 +386,12 @@ class SubworldNetworkService {
         timestamp: new Date().toISOString(),
         id: `msg-${Date.now()}`
       };
-  
+
       // Use proxy instead of direct node connection
       const nodeId = this.currentNode.id || 'bootstrap1';
-  
+
       console.log('Sending message via proxy:', `${this.proxyBaseUrl}${nodeId}/messages/send`);
-  
+
       // Send the message
       const response = await fetch(`${this.proxyBaseUrl}${nodeId}/messages/send`, {
         method: 'POST',
@@ -470,17 +430,17 @@ class SubworldNetworkService {
         console.warn('No node selected');
         return [];
       }
-  
+
       if (!this.keyPair || !this.keyPair.publicKeyDisplay) {
         console.warn('No valid key pair');
         return [];
       }
-  
+
       // Use proxy instead of direct node connection
       const nodeId = this.currentNode.id || 'bootstrap1';
-      
+
       console.log('Fetching messages for user:', this.keyPair.publicKeyDisplay);
-  
+
       // Make GET request to fetch user messages via proxy
       let response;
       try {
@@ -521,8 +481,8 @@ class SubworldNetworkService {
         // Check if this is an empty response or "no messages" response
         if (
           // Common "no messages" responses
-          responseData.status === 'success' || 
-          responseData.status === 'ok' || 
+          responseData.status === 'success' ||
+          responseData.status === 'ok' ||
           responseData.code === 200 ||
           responseData.message === 'No messages found' ||
           responseData.result === 'empty'
@@ -531,7 +491,7 @@ class SubworldNetworkService {
           // Return empty array - this is not an error
           return [];
         }
-        
+
         // Try different common property names for messages
         if (Array.isArray(responseData.messages)) {
           messages = responseData.messages;
@@ -649,23 +609,23 @@ class SubworldNetworkService {
       if (!this.currentNode) {
         throw new Error('No node selected');
       }
-  
+
       if (!messageIDs || messageIDs.length === 0) {
         console.log('No message IDs provided to mark as delivered');
         return false;
       }
-  
+
       // Use proxy instead of direct node connection
       const nodeId = this.currentNode.id || 'bootstrap1';
-      
+
       console.log(`Marking ${messageIDs.length} messages as delivered for user ${userID}`);
-  
+
       // Prepare the request payload according to the API format
       const payload = {
         user_id: userID,
         message_ids: messageIDs
       };
-  
+
       // Make POST request via proxy
       const response = await fetch(`${this.proxyBaseUrl}${nodeId}/messages/delivered`, {
         method: 'POST',
@@ -674,19 +634,19 @@ class SubworldNetworkService {
         },
         body: JSON.stringify(payload)
       });
-  
+
       if (!response.ok) {
         const errorData = await response.text();
         console.error('Failed to mark messages as delivered:', errorData);
         throw new Error(`Failed to mark messages as delivered: ${response.status}`);
       }
-  
+
       // Parse the response to confirm success
       const result = await response.json();
       console.log('Mark delivered response:', result);
-  
+
       return result.status === 'success';
-  
+
     } catch (error) {
       console.error('Error marking messages as delivered:', error);
       return false;
@@ -694,20 +654,21 @@ class SubworldNetworkService {
   }
 
   /**
-   * Get node information - only when explicitly called
-   * @returns {Promise<Object>} - Node information
-   */
+ * Get node information via proxy instead of direct connection
+ * @returns {Promise<Object>} - Node information
+ */
   async getNodeInfo() {
     try {
       if (!this.currentNode) {
         throw new Error('No node selected');
       }
 
-      // Use the API address (port 8081) for API calls
-      const apiAddress = this.currentNode.apiAddress ||
-        this.currentNode.address.replace(':8080', ':8081');
+      // Use the proxy instead of direct node connection
+      const nodeId = this.currentNode.id || 'bootstrap1';
 
-      const response = await fetch(`${apiAddress}/node/info`, {
+      console.log('Fetching node info via proxy:', `${this.proxyBaseUrl}${nodeId}/node/info`);
+
+      const response = await fetch(`${this.proxyBaseUrl}${nodeId}/node/info`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json'
@@ -718,11 +679,93 @@ class SubworldNetworkService {
         throw new Error(`Failed to get node info: ${response.status}`);
       }
 
-      return await response.json();
+      const data = await response.json();
+      console.log('Node info received from proxy:', data);
 
+      return data;
     } catch (error) {
-      console.error('Error getting node info:', error);
+      console.error('Error getting node info via proxy:', error);
       return null;
+    }
+  }
+
+  /**
+ * Check the health of a specific node via proxy
+ * @param {string} nodeId - The ID of the node to check
+ * @returns {Promise<{isOnline: boolean, latency: number}>}
+ */
+  async checkNodeHealthViaProxy(nodeId) {
+    // Return early if health checks are disabled
+    if (this.disableHealthChecks) {
+      return { isOnline: true, latency: 100 };
+    }
+
+    try {
+      // Cache check - don't check the same node more than once per minute
+      const now = Date.now();
+      const cacheKey = nodeId;
+
+      if (this.healthCheckCache.has(cacheKey)) {
+        const cached = this.healthCheckCache.get(cacheKey);
+        // If checked in the last 60 seconds, return cached result
+        if (now - cached.timestamp < 60000) {
+          console.log(`Using cached health check for node ID: ${nodeId}`);
+          return {
+            isOnline: cached.isOnline,
+            latency: cached.latency
+          };
+        }
+      }
+
+      // Use the proxy's health endpoint
+      const healthEndpoint = `${this.proxyBaseUrl}${nodeId}/health`;
+      console.log(`Checking node health via proxy: ${healthEndpoint}`);
+
+      // Measure latency
+      const startTime = Date.now();
+
+      // Add timeout to the fetch request
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+      const response = await fetch(healthEndpoint, {
+        method: 'GET',
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
+
+      const latency = Date.now() - startTime;
+      let result;
+
+      if (response.ok) {
+        const data = await response.json();
+        result = {
+          isOnline: data.status === 'ok' || data.status === 'success',
+          latency: latency
+        };
+      } else {
+        result = { isOnline: false, latency: 999 };
+      }
+
+      // Cache the result
+      this.healthCheckCache.set(cacheKey, {
+        ...result,
+        timestamp: now
+      });
+
+      return result;
+    } catch (error) {
+      console.error('Health check via proxy failed:', error);
+
+      // Cache the failure to avoid repeated failed attempts
+      this.healthCheckCache.set(nodeId, {
+        isOnline: false,
+        latency: 999,
+        timestamp: Date.now()
+      });
+
+      return { isOnline: false, latency: 999 };
     }
   }
 }
