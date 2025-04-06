@@ -29,7 +29,7 @@ class SubworldNetworkService {
     this.healthCheckCache = new Map();
 
     // Emergency flag to disable all automatic health checks
-    this.disableHealthChecks = false; 
+    this.disableHealthChecks = false;
 
     // Rate limiting for API calls
     this.lastNodeFetch = 0;
@@ -657,37 +657,62 @@ class SubworldNetworkService {
  * Get node information via proxy instead of direct connection
  * @returns {Promise<Object>} - Node information
  */
-  async getNodeInfo() {
+async getNodeInfo() {
+  try {
+    if (!this.currentNode) {
+      console.warn('No node selected for getNodeInfo');
+      return null;
+    }
+
+    // Use the proxy instead of direct node connection
+    const nodeId = this.currentNode.id || 'bootstrap1';
+    const endpoint = `${this.proxyBaseUrl}${nodeId}/node/info`;
+    
+    console.log('Fetching node info via proxy:', endpoint);
+
+    // Add timeout to prevent hanging requests
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+
     try {
-      if (!this.currentNode) {
-        throw new Error('No node selected');
-      }
-
-      // Use the proxy instead of direct node connection
-      const nodeId = this.currentNode.id || 'bootstrap1';
-
-      console.log('Fetching node info via proxy:', `${this.proxyBaseUrl}${nodeId}/node/info`);
-
-      const response = await fetch(`${this.proxyBaseUrl}${nodeId}/node/info`, {
+      const response = await fetch(endpoint, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json'
-        }
+        },
+        signal: controller.signal
       });
+      
+      // Clear the timeout
+      clearTimeout(timeoutId);
 
       if (!response.ok) {
-        throw new Error(`Failed to get node info: ${response.status}`);
+        const errorText = await response.text();
+        console.warn(`Node info request failed: ${response.status} ${response.statusText}`, errorText);
+        return null;
       }
 
       const data = await response.json();
       console.log('Node info received from proxy:', data);
 
       return data;
-    } catch (error) {
-      console.error('Error getting node info via proxy:', error);
+    } catch (fetchError) {
+      // Clear the timeout if fetch threw an error
+      clearTimeout(timeoutId);
+      
+      if (fetchError.name === 'AbortError') {
+        console.warn('Node info request timed out');
+      } else {
+        console.warn('Fetch error in getNodeInfo:', fetchError.message);
+      }
+      
       return null;
     }
+  } catch (error) {
+    console.warn('Error in getNodeInfo:', error.message || 'Unknown error');
+    return null;
   }
+}
 
   /**
  * Check the health of a specific node via proxy
@@ -717,7 +742,6 @@ class SubworldNetworkService {
         }
       }
 
-      // Use the proxy's health endpoint
       const healthEndpoint = `${this.proxyBaseUrl}${nodeId}/health`;
       console.log(`Checking node health via proxy: ${healthEndpoint}`);
 
@@ -726,37 +750,59 @@ class SubworldNetworkService {
 
       // Add timeout to the fetch request
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
 
-      const response = await fetch(healthEndpoint, {
-        method: 'GET',
-        signal: controller.signal
-      });
+      try {
+        const response = await fetch(healthEndpoint, {
+          method: 'GET',
+          signal: controller.signal
+        });
 
-      clearTimeout(timeoutId);
+        clearTimeout(timeoutId);
 
-      const latency = Date.now() - startTime;
-      let result;
+        const latency = Date.now() - startTime;
+        let result;
 
-      if (response.ok) {
-        const data = await response.json();
-        result = {
-          isOnline: data.status === 'ok' || data.status === 'success',
-          latency: latency
-        };
-      } else {
-        result = { isOnline: false, latency: 999 };
+        if (response.ok) {
+          const data = await response.json();
+          result = {
+            isOnline: data.status === 'ok' || data.status === 'success',
+            latency: latency
+          };
+        } else {
+          result = { isOnline: false, latency: 999 };
+        }
+
+        // Cache the result
+        this.healthCheckCache.set(nodeId, {
+          ...result,
+          timestamp: Date.now()
+        });
+
+        return result;
+      } catch (fetchError) {
+        clearTimeout(timeoutId);
+
+        // Handle abort errors specifically
+        if (fetchError.name === 'AbortError') {
+          console.log(`Request timeout for node ${nodeId}`);
+        } else {
+          console.error('Fetch error in health check:', fetchError);
+        }
+
+        // Either way, the node is considered offline
+        const result = { isOnline: false, latency: 999 };
+
+        // Cache the failure
+        this.healthCheckCache.set(nodeId, {
+          ...result,
+          timestamp: Date.now()
+        });
+
+        return result;
       }
-
-      // Cache the result
-      this.healthCheckCache.set(cacheKey, {
-        ...result,
-        timestamp: now
-      });
-
-      return result;
-    } catch (error) {
-      console.error('Health check via proxy failed:', error);
+    } catch (outerError) {
+      console.error('Health check via proxy failed:', outerError);
 
       // Cache the failure to avoid repeated failed attempts
       this.healthCheckCache.set(nodeId, {

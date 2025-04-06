@@ -9,46 +9,58 @@ export default function NetworkStatus({ selectedNode }) {
   const [nodeInfo, setNodeInfo] = useState(null)
   const [lastCheck, setLastCheck] = useState(0)
 
-  // Check connection status with rate limiting
   useEffect(() => {
-    // Don't attempt checks if no node is selected
     if (!selectedNode || !selectedNode.address) {
       setIsConnected(false);
       return;
     }
-  
+
     const checkConnection = async () => {
-      // Rate limiting - only check every 2 minutes
+      // Rate limiting - only check every X seconds
       const now = Date.now();
-      if (now - lastCheck < 120000) { // 2 minutes
+      if (now - lastCheck < 10000) { // 10 seconds
         return;
       }
-      
+
       setLastCheck(now);
-      
+
       try {
-        // Just set connected status based on the node's isOnline property
-        // Don't perform an actual network check
-        setIsConnected(selectedNode.isOnline !== false);
-        
-        // Only try to get node info once per session
-        if (!nodeInfo) {
-          const info = await subworldNetwork.getNodeInfo();
-          if (info) {
-            setNodeInfo(info);
+        // Get the actual connection status instead of just reading the property
+        if (subworldNetwork && typeof subworldNetwork.checkNodeHealth === 'function') {
+          const health = await subworldNetwork.checkNodeHealth(selectedNode.address);
+          setIsConnected(health.isOnline);
+        } else {
+          // Fallback to property if method not available
+          setIsConnected(selectedNode.isOnline !== false);
+        }
+
+        // Only try to get node info once per session and only if we're connected
+        if (!nodeInfo && isConnected) {
+          try {
+            const info = await subworldNetwork.getNodeInfo();
+            if (info) {
+              setNodeInfo(info);
+            }
+          } catch (nodeInfoError) {
+            // Just log the error, don't update connection status for node info failures
+            console.warn('Failed to get node info:', nodeInfoError.message);
           }
         }
       } catch (error) {
-        // Silently handle errors
-        console.log('Network status check failed:', error.message);
+        // Handle connection check errors
+        console.warn('Network status check failed:', error.message);
+        setIsConnected(false);
       }
     };
-
     // Initial check
     checkConnection();
-    
-    // No interval for automatic checks - just use the initial check
-    return () => {};
+
+    // Set up interval for periodic checks
+    const intervalId = setInterval(checkConnection, 10000); // Check every 10 seconds
+
+    return () => {
+      clearInterval(intervalId); // Clean up the interval on unmount
+    };
   }, [selectedNode]);
 
   return (
