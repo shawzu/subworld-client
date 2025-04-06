@@ -192,18 +192,25 @@ export default function App() {
 
   const handleSendImage = async () => {
     if (!selectedImage || !selectedConversation || !conversationManager) return;
-
+  
     try {
       // Show loading state
       setIsLoading(true);
-
-      // Send the image
+  
+      // Check image size
+      if (selectedImage.size > 5 * 1024 * 1024) {
+        alert('Image is too large. Please select an image under 5MB.');
+        setIsLoading(false);
+        return;
+      }
+  
+      // Send the image - this now stores it directly in the message
       await conversationManager.sendImage(
         selectedConversation,
         selectedImage,
         imageCaption
       );
-
+  
       // Reload conversation data
       const conversation = conversationManager.getConversation(selectedConversation);
       if (conversation) {
@@ -211,10 +218,10 @@ export default function App() {
           (a, b) => new Date(a.timestamp) - new Date(b.timestamp)
         ));
       }
-
+  
       // Refresh the conversation list
       loadConversations();
-
+  
       // Clear the inputs
       setSelectedImage(null);
       setImageCaption('');
@@ -451,6 +458,19 @@ export default function App() {
       return messageDate.toLocaleDateString([], { month: 'short', day: 'numeric' });
     }
   }
+
+  useEffect(() => {
+    // Debug log for messages
+    if (currentMessages && currentMessages.length > 0) {
+      console.log('Current messages in UI:', currentMessages.length);
+      // Log any image messages specifically
+      const imageMessages = currentMessages.filter(msg => msg.isImage);
+      console.log('Image messages:', imageMessages.length);
+      imageMessages.forEach((img, i) => {
+        console.log(`Image ${i+1}:`, img.id, img.status, img.isImage);
+      });
+    }
+  }, [currentMessages]);
 
   return (
     <KeyGuard>
@@ -976,7 +996,7 @@ export default function App() {
           onSubmit={handleNewConversationSubmit}
         />
 
-        
+
       </div>
     </KeyGuard>
   )
