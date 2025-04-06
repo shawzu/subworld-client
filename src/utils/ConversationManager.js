@@ -210,6 +210,7 @@ class ConversationManager {
       let messages;
       try {
         messages = await subworldNetwork.fetchMessages();
+        messages = this._processReceivedImageMessages(messages);
         console.log('Messages received:', messages ? (Array.isArray(messages) ? messages.length : 'non-array') : 'null');
       } catch (fetchError) {
         console.error('Error in network fetchMessages:', fetchError);
@@ -337,6 +338,103 @@ class ConversationManager {
   }
 
   /**
+ * Directly convert raw image data to a displayable blob
+ * This is a fallback for when normal image loading fails
+ */
+  async convertRawImageData(data) {
+    // Try to determine if this is base64 data
+    const isBase64 = /^[A-Za-z0-9+/=]+$/.test(data);
+
+    if (isBase64) {
+      try {
+        // Try to decode base64 to binary
+        const binaryData = atob(data);
+        const bytes = new Uint8Array(binaryData.length);
+        for (let i = 0; i < binaryData.length; i++) {
+          bytes[i] = binaryData.charCodeAt(i);
+        }
+        return new Blob([bytes], { type: 'image/jpeg' });
+      } catch (e) {
+        console.error('Failed to convert base64 to binary:', e);
+      }
+    }
+
+    // Fallback - try as plain binary
+    return new Blob([data], { type: 'image/jpeg' });
+  }
+
+  /**
+  * Send an image in a conversation
+  * @param {string} contactPublicKey - Recipient's public key
+  * @param {File} imageFile - The image file to send
+  * @param {string} caption - Optional caption for the image
+  * @returns {Promise<Object>} - The sent message
+  */
+  async sendImage(contactPublicKey, imageFile, caption = "") {
+    try {
+      // Ensure conversation exists
+      const conversation = this.createOrUpdateConversation(contactPublicKey);
+
+      // Create a unique ID for this image
+      const imageId = `img-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+
+      // Create a FormData object for the upload
+      const formData = new FormData();
+      formData.append("photo", imageFile);
+      formData.append("recipient_id", contactPublicKey);
+      formData.append("sender_id", this.currentUserKey);
+      formData.append("content_id", imageId);
+
+      // For larger images, we could implement chunking here
+      // but for simplicity we'll upload as a single chunk
+      formData.append("chunk_index", "0");
+      formData.append("total_chunks", "1");
+
+      // Log what we're sending
+      console.log(`Sending image: ${imageFile.name}, size: ${imageFile.size}, type: ${imageFile.type}`);
+      console.log(`To recipient: ${contactPublicKey} as ID: ${imageId}`);
+
+      // Send through network service
+      const result = await subworldNetwork.uploadImage(formData);
+
+      if (!result || !result.id) {
+        throw new Error("Failed to upload image: Invalid response from server");
+      }
+
+      // Create message object for the UI
+      const message = {
+        id: result.id,
+        sender: this.currentUserKey,
+        recipient: contactPublicKey,
+        content: caption || "[Image]", // Text that will display if image fails to load
+        timestamp: new Date().toISOString(),
+        status: 'sent',
+        isImage: true,
+        imageUrl: result.id, // Will be used to fetch the image later
+        imageCaption: caption,
+        // Store original image info to help with recovery
+        originalType: imageFile.type,
+        originalSize: imageFile.size
+      };
+
+      // Add to conversation
+      conversation.messages.push(message);
+      conversation.lastMessageTime = message.timestamp;
+
+      // Update conversation order based on last message time
+      this._sortConversationsByTime();
+
+      // Persist changes
+      this._persistConversations();
+
+      return message;
+    } catch (error) {
+      console.error('Error sending image:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Mark conversation as read
    * @param {string} contactPublicKey - Contact's public key
    */
@@ -346,6 +444,40 @@ class ConversationManager {
       conversation.unreadCount = 0
       this._persistConversations()
     }
+  }
+
+  /**
+ * Process received image messages to ensure they have proper flags
+ * @param {Array} messages - Array of messages to process
+ * @returns {Array} - Processed messages with proper image flags
+ */
+  _processReceivedImageMessages(messages) {
+    return messages.map(msg => {
+      // Check for image indicators in the message
+      const isPhotoMessage =
+        msg.type === 0 && // TypeMessage (default)
+        (
+          // Look for indicators in the content
+          (typeof msg.content === 'string' && (
+            msg.content.includes('[Image]') ||
+            msg.content.startsWith('Image:') ||
+            msg.id.startsWith('img-') ||
+            msg.id.startsWith('photo-')
+          ))
+        );
+
+      if (isPhotoMessage && !msg.isImage) {
+        console.log('Converting message to image type:', msg.id);
+        return {
+          ...msg,
+          isImage: true,
+          // The ID is used as the photo ID
+          imageUrl: msg.id
+        };
+      }
+
+      return msg;
+    });
   }
 
   /**
