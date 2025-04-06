@@ -17,7 +17,7 @@ import subworldNetwork from '../../utils/SubworldNetworkService'
 import contactStore from '../../utils/ContactStore'
 import conversationManager from '../../utils/ConversationManager'
 import LocalKeyStorageManager from '../../utils/LocalKeyStorageManager'
-import ImageMessage from '../components/ImageMessage';
+
 
 export default function App() {
   const messagesEndRef = useRef(null)
