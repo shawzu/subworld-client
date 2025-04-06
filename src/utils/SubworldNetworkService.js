@@ -714,213 +714,127 @@ class SubworldNetworkService {
     }
   }
 
-  /**
- * Upload an image to the server
- * @param {FormData} formData - FormData containing the image and metadata
- * @returns {Promise<Object>} - Server response
+ /**
+ * Upload a file to the network
+ * @param {string} recipientPublicKey - Recipient's public key
+ * @param {File} file - The file to upload
+ * @returns {Promise<Object>} - Upload result
  */
-async uploadImage(formData) {
+async uploadFile(recipientPublicKey, file) {
   try {
     if (!this.currentNode) {
       throw new Error('No node selected');
     }
-    
-    // Get the photo file from FormData for processing
-    const photoFile = formData.get('photo');
-    console.log(`Uploading image: ${photoFile.name}, size: ${photoFile.size}, type: ${photoFile.type}`);
-    
-    // If needed for debugging, store the original file type
-    formData.append('originalType', photoFile.type);
-    
+
+    // Create FormData for the file upload
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('recipient_id', recipientPublicKey);
+    formData.append('sender_id', this.keyPair.publicKeyDisplay);
+    formData.append('file_name', file.name);
+    formData.append('file_type', file.type);
+
+    const contentId = `file-${Date.now()}`;
+    formData.append('content_id', contentId);
+
     // Use proxy instead of direct node connection
     const nodeId = this.currentNode.id || 'bootstrap1';
-    const endpoint = `${this.proxyBaseUrl}${nodeId}/photos/upload`;
-    
-    console.log('Uploading image via proxy:', endpoint);
-    
-    // Use fetch API with FormData
-    const response = await fetch(endpoint, {
+    console.log(`Uploading file via proxy: ${this.proxyBaseUrl}${nodeId}/files/upload`);
+
+    // Upload the file
+    const response = await fetch(`${this.proxyBaseUrl}${nodeId}/files/upload`, {
       method: 'POST',
-      body: formData, // FormData automatically sets the correct content-type
+      body: formData
     });
-    
+
     if (!response.ok) {
-      const errorData = await response.text();
-      console.error('Failed to upload image:', response.status, errorData);
-      throw new Error(`Failed to upload image: ${response.status}`);
+      const errorText = await response.text();
+      console.error('Server response:', errorText);
+      throw new Error(`Failed to upload file: ${response.status}`);
     }
-    
+
     const data = await response.json();
-    console.log('Image upload successful:', data);
-    
+    console.log('File uploaded successfully:', data);
+
     return {
       success: true,
-      id: data.id,
-      chunkIndex: data.chunk_index
+      fileId: data.id || contentId
     };
   } catch (error) {
-    console.error('Error uploading image:', error);
+    console.error('Error uploading file:', error);
     throw error;
   }
 }
 
-  /**
- * Get an image from the server
+/**
+ * Get file metadata from the network
  * @param {string} userID - User ID
- * @param {string} photoID - Photo ID
- * @param {number} chunkIndex - Chunk index (optional, default: 0)
- * @returns {Promise<Blob>} - Image data as blob
+ * @param {string} fileID - File ID
+ * @returns {Promise<Object>} - File metadata
  */
-async getImage(userID, photoID, chunkIndex = 0) {
+async getFileMetadata(userID, fileID) {
   try {
     if (!this.currentNode) {
       throw new Error('No node selected');
     }
-    
+
     // Use proxy instead of direct node connection
     const nodeId = this.currentNode.id || 'bootstrap1';
-    const endpoint = `${this.proxyBaseUrl}${nodeId}/photos/get?user_id=${encodeURIComponent(userID)}&photo_id=${encodeURIComponent(photoID)}&chunk=${chunkIndex}`;
+    const endpoint = `${this.proxyBaseUrl}${nodeId}/files/get?user_id=${encodeURIComponent(userID)}&file_id=${encodeURIComponent(fileID)}`;
     
-    console.log('Fetching image via proxy:', endpoint);
+    console.log('Fetching file metadata:', endpoint);
     
     const response = await fetch(endpoint);
     
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('Failed to fetch image:', response.status, errorText);
-      throw new Error(`Failed to fetch image: ${response.status}`);
+      console.error('Failed to fetch file metadata:', errorText);
+      throw new Error(`Failed to fetch file metadata: ${response.status}`);
     }
     
-    // Get the response as array buffer (binary data)
-    const arrayBuffer = await response.arrayBuffer();
-    console.log(`Received binary data: ${arrayBuffer.byteLength} bytes`);
-    
-    // No data received
-    if (!arrayBuffer || arrayBuffer.byteLength === 0) {
-      throw new Error('Empty response received');
-    }
-    
-    // Convert to Uint8Array to examine the data
-    const bytes = new Uint8Array(arrayBuffer);
-    
-    // Check for common image file signatures to determine format
-    let mimeType = 'application/octet-stream';
-    
-    // JPEG signature: FF D8 FF
-    if (bytes[0] === 0xFF && bytes[1] === 0xD8 && bytes[2] === 0xFF) {
-      mimeType = 'image/jpeg';
-      console.log('Detected JPEG image from header');
-    } 
-    // PNG signature: 89 50 4E 47 0D 0A 1A 0A
-    else if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4E && bytes[3] === 0x47) {
-      mimeType = 'image/png';
-      console.log('Detected PNG image from header');
-    }
-    // GIF signature: 47 49 46 38
-    else if (bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x38) {
-      mimeType = 'image/gif';
-      console.log('Detected GIF image from header');
-    }
-    // WebP signature: 52 49 46 46 ?? ?? ?? ?? 57 45 42 50
-    else if (bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 && 
-             bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50) {
-      mimeType = 'image/webp';
-      console.log('Detected WebP image from header');
-    }
-    // BMP signature: 42 4D
-    else if (bytes[0] === 0x42 && bytes[1] === 0x4D) {
-      mimeType = 'image/bmp';
-      console.log('Detected BMP image from header');
-    }
-    
-    // Check if this is text data (likely base64 encoded)
-    let isText = true;
-    for (let i = 0; i < Math.min(bytes.length, 100); i++) {
-      // Check if byte is outside the ASCII text range
-      if (bytes[i] < 32 && bytes[i] !== 9 && bytes[i] !== 10 && bytes[i] !== 13) {
-        isText = false;
-        break;
-      }
-    }
-    
-    // For text data, try to handle it as base64
-    if (isText) {
-      const text = new TextDecoder().decode(bytes);
-      console.log('Data appears to be text. First 50 chars:', text.substring(0, 50));
-      
-      // Check if it's a data URL
-      if (text.startsWith('data:image/')) {
-        try {
-          // Extract the mime type and base64 data
-          const match = text.match(/^data:([^;]+);base64,(.+)$/);
-          if (match) {
-            const dataType = match[1];
-            const base64Data = match[2];
-            console.log('Detected data URL with type:', dataType);
-            
-            // Decode base64
-            const binaryStr = atob(base64Data);
-            const len = binaryStr.length;
-            const bytes = new Uint8Array(len);
-            for (let i = 0; i < len; i++) {
-              bytes[i] = binaryStr.charCodeAt(i);
-            }
-            
-            return new Blob([bytes], { type: dataType });
-          }
-        } catch (e) {
-          console.error('Error processing data URL:', e);
-        }
-      }
-      
-      // Check if it's just base64
-      try {
-        // Test if it's valid base64
-        if (/^[A-Za-z0-9+/=]+$/.test(text.trim())) {
-          console.log('Data appears to be base64 encoded');
-          try {
-            // Decode base64
-            const binaryStr = atob(text.trim());
-            const len = binaryStr.length;
-            const bytes = new Uint8Array(len);
-            for (let i = 0; i < len; i++) {
-              bytes[i] = binaryStr.charCodeAt(i);
-            }
-            
-            // Check the first few bytes for image signatures again
-            if (bytes[0] === 0xFF && bytes[1] === 0xD8 && bytes[2] === 0xFF) {
-              console.log('Base64 decoded to JPEG');
-              return new Blob([bytes], { type: 'image/jpeg' });
-            } else if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4E && bytes[3] === 0x47) {
-              console.log('Base64 decoded to PNG');
-              return new Blob([bytes], { type: 'image/png' });
-            } else if (bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x38) {
-              console.log('Base64 decoded to GIF');
-              return new Blob([bytes], { type: 'image/gif' });
-            }
-            
-            // Default to JPEG if no signature detected
-            return new Blob([bytes], { type: 'image/jpeg' });
-          } catch (e) {
-            console.error('Error decoding base64:', e);
-          }
-        }
-      } catch (e) {
-        console.error('Error checking base64:', e);
-      }
-    }
-    
-    // Create a blob with detected MIME type, or fallback to jpeg
-    const blob = new Blob([arrayBuffer], { type: mimeType || 'image/jpeg' });
-    console.log(`Created blob with type ${blob.type}, size ${blob.size} bytes`);
-    
-    return blob;
+    const metadata = await response.json();
+    return metadata;
   } catch (error) {
-    console.error('Error fetching image:', error);
+    console.error('Error getting file metadata:', error);
     throw error;
   }
 }
 
+/**
+ * Download a file from the network
+ * @param {string} userID - User ID
+ * @param {string} fileID - File ID
+ * @param {number} chunkIndex - Chunk index (optional)
+ * @returns {Promise<Blob>} - File data as blob
+ */
+async downloadFile(userID, fileID, chunkIndex = 0) {
+  try {
+    if (!this.currentNode) {
+      throw new Error('No node selected');
+    }
+    
+    // Use proxy instead of direct node connection
+    const nodeId = this.currentNode.id || 'bootstrap1';
+    const endpoint = `${this.proxyBaseUrl}${nodeId}/files/get?user_id=${encodeURIComponent(userID)}&file_id=${encodeURIComponent(fileID)}&chunk=${chunkIndex}`;
+    
+    console.log('Downloading file chunk:', endpoint);
+    
+    const response = await fetch(endpoint);
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('Failed to download file:', errorText);
+      throw new Error(`Failed to download file: ${response.status}`);
+    }
+    
+    // Get the file as a blob
+    const blob = await response.blob();
+    return blob;
+  } catch (error) {
+    console.error('Error downloading file:', error);
+    throw error;
+  }
+}
 
   /**
  * Check the health of a specific node via proxy

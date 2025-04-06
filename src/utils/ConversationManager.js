@@ -179,256 +179,273 @@ class ConversationManager {
     }
   }
 
-  /**
+ /**
  * Fetch new messages from the network
  * @returns {Promise<number>} - Number of new messages
  */
-  async fetchNewMessages() {
-    try {
-      // Rate limiting - only fetch messages every 30 seconds at most
-      const now = Date.now();
-      if (now - this._lastFetchTime < 30000) {
-        console.log('Skipping message fetch - fetched recently');
-        return 0;
-      }
-      this._lastFetchTime = now;
-      console.log('Fetching messages (rate limited)...');
-
-      // Check if network service is available
-      if (!subworldNetwork) {
-        console.warn('Network service unavailable');
-        return 0;
-      }
-
-      // Check if user key is available
-      if (!this.currentUserKey) {
-        console.warn('No current user key available');
-        return 0;
-      }
-
-      // Get messages from network service with explicit try/catch
-      let messages;
-      try {
-        messages = await subworldNetwork.fetchMessages();
-        messages = this._processReceivedImageMessages(messages);
-        console.log('Messages received:', messages ? (Array.isArray(messages) ? messages.length : 'non-array') : 'null');
-      } catch (fetchError) {
-        console.error('Error in network fetchMessages:', fetchError);
-        return 0;
-      }
-
-      // Validate that messages is an array
-      if (!messages) {
-        console.warn('No messages returned');
-        return 0;
-      }
-
-      if (!Array.isArray(messages)) {
-        console.warn('Invalid messages format:', typeof messages);
-        return 0;
-      }
-
-      // Process new messages
-      let newMessageCount = 0;
-      const processedIds = [];
-
-      for (let i = 0; i < messages.length; i++) {
-        const message = messages[i];
-
-        // Skip invalid messages
-        if (!message || typeof message !== 'object') {
-          console.warn('Skipping invalid message at index', i, ':', message);
-          continue;
-        }
-
-        // Ensure message has required properties
-        if (!message.sender || !message.recipient) {
-          console.warn('Message missing sender or recipient at index', i, ':', message);
-          continue;
-        }
-
-        try {
-          // Determine the other party (sender if received, recipient if sent)
-          const contactPublicKey = message.sender === this.currentUserKey
-            ? message.recipient
-            : message.sender;
-
-          // Get or create conversation
-          const conversation = this.createOrUpdateConversation(contactPublicKey);
-
-          // Skip if no valid conversation
-          if (!conversation || !conversation.messages) {
-            console.warn('Invalid conversation for', contactPublicKey);
-            continue;
-          }
-
-          // Generate message ID if missing
-          if (!message.id) {
-            message.id = `gen-${Date.now()}-${i}`;
-          }
-
-          // Check if message already exists in conversation
-          const messageExists = conversation.messages.some(m => m && m.id === message.id);
-
-          if (!messageExists) {
-            // Add message to conversation
-            conversation.messages.push(message);
-
-            // Update last message time safely
-            const messageTime = new Date(message.timestamp || Date.now());
-            const lastTime = conversation.lastMessageTime ? new Date(conversation.lastMessageTime) : new Date(0);
-            if (messageTime > lastTime) {
-              conversation.lastMessageTime = message.timestamp || new Date().toISOString();
-            }
-
-            // Increment unread count for received messages
-            if (message.sender !== this.currentUserKey) {
-              conversation.unreadCount = (conversation.unreadCount || 0) + 1;
-              newMessageCount++;
-
-              // Collect ID for delivery receipt
-              if (message.id) {
-                processedIds.push(message.id);
-              }
-            }
-          }
-        } catch (messageError) {
-          // Catch errors for individual messages to prevent full failure
-          console.error('Error processing message at index', i, ':', messageError);
-        }
-      }
-
-      // Mark messages as delivered on the server if any were found
-      if (newMessageCount > 0 && processedIds.length > 0) {
-        try {
-          // Fire and forget - don't wait for this to complete
-          subworldNetwork.markMessagesAsDelivered(this.currentUserKey, processedIds)
-            .catch(err => console.log('Failed to mark messages as delivered:', err));
-        } catch (markError) {
-          console.error('Error initiating mark as delivered:', markError);
-        }
-      }
-
-      try {
-        // Update last fetch time
-        this.lastFetch = new Date();
-
-        // Sort conversations
-        this._sortConversationsByTime();
-
-        // Persist changes
-        this._persistConversations();
-      } catch (updateError) {
-        console.error('Error updating conversation state:', updateError);
-      }
-
-      return newMessageCount;
-    } catch (error) {
-      // Use a safer error logging approach
-      console.error('Error in fetchNewMessages:', error ? error.message : 'Unknown error');
-
-      // Additional debug info that won't cause errors
-      if (error) {
-        console.log('Error name:', error.name);
-        console.log('Error stack:', error.stack);
-      }
-
+async fetchNewMessages() {
+  try {
+    // Rate limiting - only fetch messages every 30 seconds at most
+    const now = Date.now();
+    if (now - this._lastFetchTime < 30000) {
+      console.log('Skipping message fetch - fetched recently');
       return 0;
     }
-  }
+    this._lastFetchTime = now;
+    console.log('Fetching messages (rate limited)...');
 
-  /**
- * Directly convert raw image data to a displayable blob
- * This is a fallback for when normal image loading fails
- */
-  async convertRawImageData(data) {
-    // Try to determine if this is base64 data
-    const isBase64 = /^[A-Za-z0-9+/=]+$/.test(data);
+    // Check if network service is available
+    if (!subworldNetwork) {
+      console.warn('Network service unavailable');
+      return 0;
+    }
 
-    if (isBase64) {
+    // Check if user key is available
+    if (!this.currentUserKey) {
+      console.warn('No current user key available');
+      return 0;
+    }
+
+    // Get messages from network service with explicit try/catch
+    let messages;
+    try {
+      messages = await subworldNetwork.fetchMessages();
+      console.log('Messages received:', messages ? (Array.isArray(messages) ? messages.length : 'non-array') : 'null');
+    } catch (fetchError) {
+      console.error('Error in network fetchMessages:', fetchError);
+      return 0;
+    }
+
+    // Validate that messages is an array
+    if (!messages) {
+      console.warn('No messages returned');
+      return 0;
+    }
+
+    if (!Array.isArray(messages)) {
+      console.warn('Invalid messages format:', typeof messages);
+      return 0;
+    }
+
+    // Process new messages
+    let newMessageCount = 0;
+    const processedIds = [];
+
+    for (let i = 0; i < messages.length; i++) {
+      const message = messages[i];
+
+      // Skip invalid messages
+      if (!message || typeof message !== 'object') {
+        console.warn('Skipping invalid message at index', i, ':', message);
+        continue;
+      }
+
+      // Ensure message has required properties
+      if (!message.sender || !message.recipient) {
+        console.warn('Message missing sender or recipient at index', i, ':', message);
+        continue;
+      }
+
       try {
-        // Try to decode base64 to binary
-        const binaryData = atob(data);
-        const bytes = new Uint8Array(binaryData.length);
-        for (let i = 0; i < binaryData.length; i++) {
-          bytes[i] = binaryData.charCodeAt(i);
+        // Check if this is a file metadata message
+        if (typeof message.content === 'string') {
+          try {
+            const potentialMetadata = JSON.parse(message.content);
+            if (potentialMetadata && potentialMetadata.messageType === 'file') {
+              // This is a file metadata message - convert it to a file message
+              message.isFile = true;
+              message.fileID = potentialMetadata.fileID;
+              message.fileName = potentialMetadata.fileName;
+              message.fileType = potentialMetadata.fileType;
+              message.fileSize = potentialMetadata.fileSize;
+              // Update the content to show it's a file
+              message.content = `[File: ${potentialMetadata.fileName}]`;
+              console.log('Converted message to file message:', message);
+            }
+          } catch (jsonError) {
+            // Not JSON, just a regular message
+          }
         }
-        return new Blob([bytes], { type: 'image/jpeg' });
-      } catch (e) {
-        console.error('Failed to convert base64 to binary:', e);
+
+        // Determine the other party (sender if received, recipient if sent)
+        const contactPublicKey = message.sender === this.currentUserKey
+          ? message.recipient
+          : message.sender;
+
+        // Get or create conversation
+        const conversation = this.createOrUpdateConversation(contactPublicKey);
+
+        // Skip if no valid conversation
+        if (!conversation || !conversation.messages) {
+          console.warn('Invalid conversation for', contactPublicKey);
+          continue;
+        }
+
+        // Generate message ID if missing
+        if (!message.id) {
+          message.id = `gen-${Date.now()}-${i}`;
+        }
+
+        // Check if message already exists in conversation
+        const messageExists = conversation.messages.some(m => m && m.id === message.id);
+
+        if (!messageExists) {
+          // Add message to conversation
+          conversation.messages.push(message);
+
+          // Update last message time safely
+          const messageTime = new Date(message.timestamp || Date.now());
+          const lastTime = conversation.lastMessageTime ? new Date(conversation.lastMessageTime) : new Date(0);
+          if (messageTime > lastTime) {
+            conversation.lastMessageTime = message.timestamp || new Date().toISOString();
+          }
+
+          // Increment unread count for received messages
+          if (message.sender !== this.currentUserKey) {
+            conversation.unreadCount = (conversation.unreadCount || 0) + 1;
+            newMessageCount++;
+
+            // Collect ID for delivery receipt
+            if (message.id) {
+              processedIds.push(message.id);
+            }
+          }
+        }
+      } catch (messageError) {
+        // Catch errors for individual messages to prevent full failure
+        console.error('Error processing message at index', i, ':', messageError);
       }
     }
 
-    // Fallback - try as plain binary
-    return new Blob([data], { type: 'image/jpeg' });
-  }
+    // Mark messages as delivered on the server if any were found
+    if (newMessageCount > 0 && processedIds.length > 0) {
+      try {
+        // Fire and forget - don't wait for this to complete
+        subworldNetwork.markMessagesAsDelivered(this.currentUserKey, processedIds)
+          .catch(err => console.log('Failed to mark messages as delivered:', err));
+      } catch (markError) {
+        console.error('Error initiating mark as delivered:', markError);
+      }
+    }
 
-  /**
-  * Send an image in a conversation
-  * @param {string} contactPublicKey - Recipient's public key
-  * @param {File} imageFile - The image file to send
-  * @param {string} caption - Optional caption for the image
-  * @returns {Promise<Object>} - The sent message
-  */
-  async sendImage(contactPublicKey, imageFile, caption = "") {
     try {
-      // Ensure conversation exists
-      const conversation = this.createOrUpdateConversation(contactPublicKey);
+      // Update last fetch time
+      this.lastFetch = new Date();
 
-      // Convert the image to base64
-      const base64Image = await this.convertImageToBase64(imageFile);
-
-      // Create a unique ID for this message
-      const messageId = `img-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-
-      // Create message object with base64 data embedded directly
-      const message = {
-        id: messageId,
-        sender: this.currentUserKey,
-        recipient: contactPublicKey,
-        content: caption || "[Image]",
-        timestamp: new Date().toISOString(),
-        status: 'sent',
-        isImage: true,
-        imageData: base64Image, // Store image directly in the message
-        imageType: imageFile.type,
-        imageCaption: caption,
-        originalName: imageFile.name,
-        originalSize: imageFile.size
-      };
-
-      // Add to conversation
-      conversation.messages.push(message);
-      conversation.lastMessageTime = message.timestamp;
-
-      // Update conversation order
+      // Sort conversations
       this._sortConversationsByTime();
 
       // Persist changes
       this._persistConversations();
+    } catch (updateError) {
+      console.error('Error updating conversation state:', updateError);
+    }
 
-      // OPTIONAL: Also send through the network (but we don't rely on it)
+    return newMessageCount;
+  } catch (error) {
+    // Use a safer error logging approach
+    console.error('Error in fetchNewMessages:', error ? error.message : 'Unknown error');
+
+    // Additional debug info that won't cause errors
+    if (error) {
+      console.log('Error name:', error.name);
+      console.log('Error stack:', error.stack);
+    }
+
+    return 0;
+  }
+}
+
+ 
+
+  /**
+  * Send a file in a conversation through the network
+  * @param {string} contactPublicKey - Recipient's public key
+  * @param {File} file - The file to send
+  * @returns {Promise<Object>} - The sent message
+  */
+  async sendFile(contactPublicKey, file) {
+    try {
+      // Ensure conversation exists
+      const conversation = this.createOrUpdateConversation(contactPublicKey);
+  
+      // Show original file size
+      const fileSizeFormatted = this.formatFileSize(file.size);
+  
+      // Upload the file to the network
+      const uploadResult = await subworldNetwork.uploadFile(
+        contactPublicKey,
+        file
+      );
+  
+      if (!uploadResult.success || !uploadResult.fileId) {
+        throw new Error('Failed to upload file to the network');
+      }
+  
+      // Create a unique ID for this message
+      const messageId = `file-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+  
+      // Create message object with file reference
+      const message = {
+        id: messageId,
+        sender: this.currentUserKey,
+        recipient: contactPublicKey,
+        content: `[File: ${file.name}]`,
+        timestamp: new Date().toISOString(),
+        status: 'sent',
+        isFile: true,
+        fileID: uploadResult.fileId, // Store the file ID from the network
+        fileName: file.name,
+        fileType: file.type,
+        fileSize: file.size
+      };
+  
+      // Add to conversation
+      conversation.messages.push(message);
+      conversation.lastMessageTime = message.timestamp;
+  
+      // Update conversation order
+      this._sortConversationsByTime();
+  
+      // Persist changes
+      this._persistConversations();
+  
+      // IMPORTANT: Send a message with the file metadata, not just a notification
       try {
-        // Send a notification message that an image was sent
-        // We don't send the actual image through the network
+        // Create a message that includes file metadata
+        const fileMetadata = {
+          messageType: 'file',
+          fileID: uploadResult.fileId,
+          fileName: file.name,
+          fileType: file.type,
+          fileSize: file.size
+        };
+        
+        // Send as JSON string
         await this.sendMessage(
           contactPublicKey,
-          `[Sent an image${caption ? `: ${caption}` : ''}]`
+          JSON.stringify(fileMetadata)
         );
       } catch (networkError) {
-        console.log('Network notification failed, but image is stored locally');
-        // This is non-critical - the image is already stored locally
+        console.log('Network notification failed, but file was uploaded');
       }
-
+  
       return message;
     } catch (error) {
-      console.error('Error sending image:', error);
+      console.error('Error sending file:', error);
       throw error;
     }
   }
 
-  // Add this helper method to ConversationManager
-  async convertImageToBase64(file) {
+  // Helper method to format file size
+  formatFileSize(bytes) {
+    if (bytes < 1024) return bytes + ' bytes';
+    else if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    else if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    else return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
+  }
+  // Helper method to convert file to base64
+  async convertFileToBase64(file) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onloadend = () => resolve(reader.result);
@@ -436,6 +453,9 @@ class ConversationManager {
       reader.readAsDataURL(file);
     });
   }
+
+
+
 
   /**
    * Mark conversation as read
@@ -449,39 +469,6 @@ class ConversationManager {
     }
   }
 
-  /**
- * Process received image messages to ensure they have proper flags
- * @param {Array} messages - Array of messages to process
- * @returns {Array} - Processed messages with proper image flags
- */
-  _processReceivedImageMessages(messages) {
-    return messages.map(msg => {
-      // Check for image indicators in the message
-      const isPhotoMessage =
-        msg.type === 0 && // TypeMessage (default)
-        (
-          // Look for indicators in the content
-          (typeof msg.content === 'string' && (
-            msg.content.includes('[Image]') ||
-            msg.content.startsWith('Image:') ||
-            msg.id.startsWith('img-') ||
-            msg.id.startsWith('photo-')
-          ))
-        );
-
-      if (isPhotoMessage && !msg.isImage) {
-        console.log('Converting message to image type:', msg.id);
-        return {
-          ...msg,
-          isImage: true,
-          // The ID is used as the photo ID
-          imageUrl: msg.id
-        };
-      }
-
-      return msg;
-    });
-  }
 
   /**
    * Get conversation preview data (for conversation list)

@@ -17,7 +17,9 @@ import subworldNetwork from '../../utils/SubworldNetworkService'
 import contactStore from '../../utils/ContactStore'
 import conversationManager from '../../utils/ConversationManager'
 import LocalKeyStorageManager from '../../utils/LocalKeyStorageManager'
-import ImageMessage from '../components/ImageMessage'
+import FileMessage from '../components/FileMessage'
+import { File } from 'lucide-react'
+
 
 export default function App() {
   const messagesEndRef = useRef(null)
@@ -37,9 +39,8 @@ export default function App() {
   const [refreshing, setRefreshing] = useState(false)
   const [selectedNode, setSelectedNode] = useState(null)
 
-  const [selectedImage, setSelectedImage] = useState(null);
-  const [imageCaption, setImageCaption] = useState('');
-  const [showImagePreview, setShowImagePreview] = useState(false);
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [showFilePreview, setShowFilePreview] = useState(false);
 
   // Scroll to bottom of message list
   const scrollToBottom = () => {
@@ -172,45 +173,31 @@ export default function App() {
   const handleFileSelect = (e) => {
     const file = e.target.files[0];
     if (file) {
-      // Check if it's an image
-      if (!file.type.startsWith('image/')) {
-        alert('Please select an image file.');
+      // Check file size (limit to 10MB)
+      if (file.size > 10 * 1024 * 1024) {
+        alert('File is too large. Please select a file under 10MB.');
         return;
       }
 
-      // Check file size (limit to 5MB)
-      if (file.size > 5 * 1024 * 1024) {
-        alert('Image is too large. Please select an image under 5MB.');
-        return;
-      }
-
-      setSelectedImage(file);
-      setShowImagePreview(true);
+      setSelectedFile(file);
+      setShowFilePreview(true);
     }
   };
 
 
-  const handleSendImage = async () => {
-    if (!selectedImage || !selectedConversation || !conversationManager) return;
-  
+  const handleSendFile = async () => {
+    if (!selectedFile || !selectedConversation || !conversationManager) return;
+
     try {
       // Show loading state
       setIsLoading(true);
-  
-      // Check image size
-      if (selectedImage.size > 5 * 1024 * 1024) {
-        alert('Image is too large. Please select an image under 5MB.');
-        setIsLoading(false);
-        return;
-      }
-  
-      // Send the image - this now stores it directly in the message
-      await conversationManager.sendImage(
+
+      // Send the file through the network
+      await conversationManager.sendFile(
         selectedConversation,
-        selectedImage,
-        imageCaption
+        selectedFile
       );
-  
+
       // Reload conversation data
       const conversation = conversationManager.getConversation(selectedConversation);
       if (conversation) {
@@ -218,17 +205,16 @@ export default function App() {
           (a, b) => new Date(a.timestamp) - new Date(b.timestamp)
         ));
       }
-  
+
       // Refresh the conversation list
       loadConversations();
-  
+
       // Clear the inputs
-      setSelectedImage(null);
-      setImageCaption('');
-      setShowImagePreview(false);
+      setSelectedFile(null);
+      setShowFilePreview(false);
     } catch (error) {
-      console.error('Failed to send image:', error);
-      alert('Failed to send image. Please try again.');
+      console.error('Failed to send file:', error);
+      alert('Failed to send file. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -460,14 +446,13 @@ export default function App() {
   }
 
   useEffect(() => {
-    // Debug log for messages
     if (currentMessages && currentMessages.length > 0) {
-      console.log('Current messages in UI:', currentMessages.length);
-      // Log any image messages specifically
-      const imageMessages = currentMessages.filter(msg => msg.isImage);
-      console.log('Image messages:', imageMessages.length);
-      imageMessages.forEach((img, i) => {
-        console.log(`Image ${i+1}:`, img.id, img.status, img.isImage);
+      console.log('Current messages:', currentMessages);
+      // Look for file messages specifically
+      const fileMessages = currentMessages.filter(msg => msg.isFile);
+      console.log('File messages:', fileMessages.length);
+      fileMessages.forEach((file, i) => {
+        console.log(`File ${i+1}:`, file.id, file.isFile, file.fileID);
       });
     }
   }, [currentMessages]);
@@ -604,8 +589,8 @@ export default function App() {
                   ) : (
                     currentMessages.map((msg) => (
                       <div key={msg.id} className={`mb-6 ${msg.sender === publicKey ? 'text-right' : ''}`}>
-                        {msg.isImage ? (
-                          <ImageMessage
+                        {msg.isFile ? (
+                          <FileMessage
                             message={msg}
                             formatMessageTime={formatMessageTime}
                             currentUserKey={publicKey}
@@ -638,7 +623,6 @@ export default function App() {
                       <input
                         id="file-upload"
                         type="file"
-                        accept="image/*"
                         onChange={handleFileSelect}
                         className="hidden"
                       />
@@ -655,16 +639,15 @@ export default function App() {
               </>
             )}
 
-            {showImagePreview && (
+            {showFilePreview && (
               <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
                 <div className="bg-gray-800 rounded-lg p-6 max-w-md w-full">
                   <div className="flex justify-between items-center mb-4">
-                    <h2 className="text-xl font-semibold">Send Image</h2>
+                    <h2 className="text-xl font-semibold">Send File</h2>
                     <button
                       onClick={() => {
-                        setShowImagePreview(false);
-                        setSelectedImage(null);
-                        setImageCaption('');
+                        setShowFilePreview(false);
+                        setSelectedFile(null);
                       }}
                       className="text-gray-400 hover:text-white"
                     >
@@ -672,37 +655,34 @@ export default function App() {
                     </button>
                   </div>
 
-                  <div className="mb-4">
-                    <img
-                      src={URL.createObjectURL(selectedImage)}
-                      alt="Preview"
-                      className="w-full h-40 object-contain bg-gray-700 rounded"
-                    />
-                  </div>
-
-                  <div className="mb-4">
-                    <input
-                      type="text"
-                      value={imageCaption}
-                      onChange={(e) => setImageCaption(e.target.value)}
-                      placeholder="Add a caption (optional)"
-                      className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
+                  <div className="mb-4 p-4 bg-gray-700 rounded-lg">
+                    <div className="flex items-center">
+                      <File size={24} className="mr-3 text-blue-400" />
+                      <div>
+                        <div className="font-medium">{selectedFile.name}</div>
+                        <div className="text-sm text-gray-400">
+                          {selectedFile.type || 'Unknown type'} • {
+                            selectedFile.size < 1024 ? selectedFile.size + ' bytes' :
+                              selectedFile.size < 1024 * 1024 ? (selectedFile.size / 1024).toFixed(1) + ' KB' :
+                                (selectedFile.size / (1024 * 1024)).toFixed(1) + ' MB'
+                          }
+                        </div>
+                      </div>
+                    </div>
                   </div>
 
                   <div className="flex justify-end">
                     <button
                       onClick={() => {
-                        setShowImagePreview(false);
-                        setSelectedImage(null);
-                        setImageCaption('');
+                        setShowFilePreview(false);
+                        setSelectedFile(null);
                       }}
                       className="px-4 py-2 bg-gray-700 text-white rounded-lg mr-2"
                     >
                       Cancel
                     </button>
                     <button
-                      onClick={handleSendImage}
+                      onClick={handleSendFile}
                       className="px-4 py-2 bg-blue-600 text-white rounded-lg flex items-center"
                       disabled={isLoading}
                     >
@@ -714,7 +694,7 @@ export default function App() {
                       ) : (
                         <>
                           <Send size={16} className="mr-2" />
-                          Send Image
+                          Send File
                         </>
                       )}
                     </button>
@@ -722,6 +702,7 @@ export default function App() {
                 </div>
               </div>
             )}
+
 
             {/* Profile Tab */}
             {activeTab === 'profile' && (
