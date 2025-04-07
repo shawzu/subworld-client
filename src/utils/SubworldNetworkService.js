@@ -714,128 +714,142 @@ class SubworldNetworkService {
     }
   }
 
- /**
- * Upload a file to the network
- * @param {string} recipientPublicKey - Recipient's public key
- * @param {File} file - The file to upload
- * @returns {Promise<Object>} - Upload result
- */
-async uploadFile(recipientPublicKey, file) {
-  try {
-    if (!this.currentNode) {
-      throw new Error('No node selected');
+  /**
+  * Upload a file to the network
+  * @param {string} recipientPublicKey - Recipient's public key
+  * @param {File} file - The file to upload
+  * @returns {Promise<Object>} - Upload result
+  */
+  async uploadFile(recipientPublicKey, file) {
+    try {
+      if (!this.currentNode) {
+        throw new Error('No node selected');
+      }
+
+      // Create FormData for the file upload
+      const formData = new FormData();
+
+      // Important: Make sure the file is being sent as raw binary
+      formData.append('file', file, file.name);
+      formData.append('recipient_id', recipientPublicKey);
+      formData.append('sender_id', this.keyPair.publicKeyDisplay);
+      formData.append('file_name', file.name);
+      formData.append('file_type', file.type);
+
+      const contentId = `file-${Date.now()}`;
+      formData.append('content_id', contentId);
+
+      // Use proxy instead of direct node connection
+      const nodeId = this.currentNode.id || 'bootstrap1';
+
+      // Set up fetch to properly handle binary data
+      const response = await fetch(`${this.proxyBaseUrl}${nodeId}/files/upload`, {
+        method: 'POST',
+        body: formData,
+        // Do not set Content-Type header - the browser will set it with boundary for FormData
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Server response:', errorText);
+        throw new Error(`Failed to upload file: ${response.status}`);
+      }
+
+      const data = await response.json();
+      console.log('File uploaded successfully:', data);
+
+      return {
+        success: true,
+        fileId: data.id || contentId
+      };
+    } catch (error) {
+      console.error('Error uploading file:', error);
+      throw error;
     }
-
-    // Create FormData for the file upload
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('recipient_id', recipientPublicKey);
-    formData.append('sender_id', this.keyPair.publicKeyDisplay);
-    formData.append('file_name', file.name);
-    formData.append('file_type', file.type);
-
-    const contentId = `file-${Date.now()}`;
-    formData.append('content_id', contentId);
-
-    // Use proxy instead of direct node connection
-    const nodeId = this.currentNode.id || 'bootstrap1';
-    console.log(`Uploading file via proxy: ${this.proxyBaseUrl}${nodeId}/files/upload`);
-
-    // Upload the file
-    const response = await fetch(`${this.proxyBaseUrl}${nodeId}/files/upload`, {
-      method: 'POST',
-      body: formData
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('Server response:', errorText);
-      throw new Error(`Failed to upload file: ${response.status}`);
-    }
-
-    const data = await response.json();
-    console.log('File uploaded successfully:', data);
-
-    return {
-      success: true,
-      fileId: data.id || contentId
-    };
-  } catch (error) {
-    console.error('Error uploading file:', error);
-    throw error;
   }
-}
 
-/**
- * Get file metadata from the network
- * @param {string} userID - User ID
- * @param {string} fileID - File ID
- * @returns {Promise<Object>} - File metadata
- */
-async getFileMetadata(userID, fileID) {
-  try {
-    if (!this.currentNode) {
-      throw new Error('No node selected');
-    }
+  /**
+   * Get file metadata from the network
+   * @param {string} userID - User ID
+   * @param {string} fileID - File ID
+   * @returns {Promise<Object>} - File metadata
+   */
+  async getFileMetadata(userID, fileID) {
+    try {
+      if (!this.currentNode) {
+        throw new Error('No node selected');
+      }
 
-    // Use proxy instead of direct node connection
-    const nodeId = this.currentNode.id || 'bootstrap1';
-    const endpoint = `${this.proxyBaseUrl}${nodeId}/files/get?user_id=${encodeURIComponent(userID)}&file_id=${encodeURIComponent(fileID)}`;
-    
-    console.log('Fetching file metadata:', endpoint);
-    
-    const response = await fetch(endpoint);
-    
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('Failed to fetch file metadata:', errorText);
-      throw new Error(`Failed to fetch file metadata: ${response.status}`);
+      // Fix: Define nodeId from currentNode
+      const nodeId = this.currentNode.id || 'bootstrap1';
+
+      const endpoint = `${this.proxyBaseUrl}${nodeId}/files/get?user_id=${encodeURIComponent(userID)}&file_id=${encodeURIComponent(fileID)}`;
+
+      console.log('Fetching file metadata:', endpoint);
+
+      const response = await fetch(endpoint);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Failed to fetch file metadata:', errorText);
+        throw new Error(`Failed to fetch file metadata: ${response.status}`);
+      }
+
+      const metadata = await response.json();
+      return metadata;
+    } catch (error) {
+      console.error('Error getting file metadata:', error);
+      throw error;
     }
-    
-    const metadata = await response.json();
-    return metadata;
-  } catch (error) {
-    console.error('Error getting file metadata:', error);
-    throw error;
   }
-}
 
-/**
- * Download a file from the network
- * @param {string} userID - User ID
- * @param {string} fileID - File ID
- * @param {number} chunkIndex - Chunk index (optional)
- * @returns {Promise<Blob>} - File data as blob
- */
-async downloadFile(userID, fileID, chunkIndex = 0) {
-  try {
-    if (!this.currentNode) {
-      throw new Error('No node selected');
+  /**
+  * Download a file from the network
+  * @param {string} userID - User ID
+  * @param {string} fileID - File ID
+  * @param {number} chunkIndex - Chunk index (optional)
+  * @returns {Promise<Blob>} - File data as blob
+  */
+  async downloadFile(userID, fileID, chunkIndex = 0) {
+    try {
+      if (!this.currentNode) {
+        throw new Error('No node selected');
+      }
+
+      // Use proxy instead of direct node connection
+      const nodeId = this.currentNode.id || 'bootstrap1';
+      const endpoint = `${this.proxyBaseUrl}${nodeId}/files/get?user_id=${encodeURIComponent(userID)}&file_id=${encodeURIComponent(fileID)}&chunk=${chunkIndex}`;
+
+      console.log('Downloading file chunk:', endpoint);
+
+      // IMPORTANT: Use fetch with { responseType: 'blob' } to ensure binary handling
+      const response = await fetch(endpoint, {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/octet-stream' // Indicate we want binary data
+        }
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Failed to download file:', errorText);
+        throw new Error(`Failed to download file: ${response.status}`);
+      }
+
+      // Get the file as a blob directly
+      const blob = await response.blob();
+
+      // Log some details about the received blob for debugging
+      console.log(`Received file blob: type=${blob.type}, size=${blob.size} bytes`);
+
+      return blob;
+    } catch (error) {
+      console.error('Error downloading file:', error);
+      throw error;
     }
-    
-    // Use proxy instead of direct node connection
-    const nodeId = this.currentNode.id || 'bootstrap1';
-    const endpoint = `${this.proxyBaseUrl}${nodeId}/files/get?user_id=${encodeURIComponent(userID)}&file_id=${encodeURIComponent(fileID)}&chunk=${chunkIndex}`;
-    
-    console.log('Downloading file chunk:', endpoint);
-    
-    const response = await fetch(endpoint);
-    
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('Failed to download file:', errorText);
-      throw new Error(`Failed to download file: ${response.status}`);
-    }
-    
-    // Get the file as a blob
-    const blob = await response.blob();
-    return blob;
-  } catch (error) {
-    console.error('Error downloading file:', error);
-    throw error;
   }
-}
 
+  
   /**
  * Check the health of a specific node via proxy
  * @param {string} nodeId - The ID of the node to check
