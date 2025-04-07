@@ -16,6 +16,9 @@ class ConversationManager {
     this.currentUserKey = null;
     this._lastFetchTime = 0; // Rate limiting
     this.disableAutoFetch = true; // Auto-fetching disabled by default
+
+    this.callSignalPrefix = "CALL_SIGNAL:";
+    this.isProcessingCallMessages = false;
   }
 
   /**
@@ -134,6 +137,57 @@ class ConversationManager {
     }
 
     return conversation
+  }
+
+  _processCallSignals(messages) {
+    // Skip if call service not available or already processing
+    if (typeof window === 'undefined' || !window.callService || this.isProcessingCallMessages) {
+      return;
+    }
+    
+    try {
+      this.isProcessingCallMessages = true;
+      
+      // Find call signaling messages
+      for (const message of messages) {
+        // Skip our own messages
+        if (message.sender === this.currentUserKey) continue;
+        
+        // Check if this is a call signaling message
+        if (typeof message.content === 'string' && message.content.startsWith(this.callSignalPrefix)) {
+          // Extract the signaling data
+          try {
+            const signalData = JSON.parse(message.content.substring(this.callSignalPrefix.length));
+            
+            // Process the signaling message
+            window.callService.processSignalingMessage(message.sender, signalData);
+          } catch (err) {
+            console.warn('Error parsing call signal:', err);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error processing call signals:', error);
+    } finally {
+      this.isProcessingCallMessages = false;
+    }
+  }
+  
+  // Add this method to the class
+  async sendCallSignal(recipientKey, signalData) {
+    try {
+      console.log("Sending call signal:", signalData.type);
+      // Add prefix to identify as call signal
+      const signalMessage = `CALL_SIGNAL:${JSON.stringify(signalData)}`;
+      
+      // Send using regular message channel
+      await this.sendMessage(recipientKey, signalMessage);
+      console.log("Call signal sent successfully");
+      return true;
+    } catch (error) {
+      console.error('Failed to send call signal:', error);
+      return false;
+    }
   }
 
   /**
@@ -316,6 +370,9 @@ class ConversationManager {
           console.error('Error processing message at index', i, ':', messageError);
         }
       }
+
+      console.log("Processing call signals from messages if any...");
+      this._processCallSignals(messages);
 
       // Mark messages as delivered on the server if any were found
       if (newMessageCount > 0 && processedIds.length > 0) {

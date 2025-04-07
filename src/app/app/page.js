@@ -20,6 +20,9 @@ import LocalKeyStorageManager from '../../utils/LocalKeyStorageManager'
 import FileMessage from '../components/FileMessage'
 import { File } from 'lucide-react'
 
+import CallButton from '../components/CallButton';
+import CallHandler from '../components/CallHandler';
+
 
 export default function App() {
   const messagesEndRef = useRef(null)
@@ -46,6 +49,52 @@ export default function App() {
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
   }
+
+  if (typeof window !== 'undefined') {
+    import('../../utils/CallService').then(module => {
+      window.callService = module.default;
+      console.log('Call service loaded globally');
+
+      // Initialize call service
+      window.callService.initialize().catch(err => {
+        console.warn('Failed to initialize call service:', err);
+      });
+    }).catch(err => {
+      console.error('Failed to load call service:', err);
+    });
+  }
+
+  useEffect(() => {
+    // Share services with each other
+    const setupServices = () => {
+      if (typeof window !== 'undefined') {
+        // Wait until both services are loaded
+        if (window.callService && window.conversationManager) {
+          // Tell call service about conversation manager
+          window.callService.conversationManager = window.conversationManager;
+          console.log("Connected call service with conversation manager");
+        } else {
+          // Try again in a moment
+          setTimeout(setupServices, 500);
+        }
+      }
+    };
+    
+    setupServices();
+  }, []);
+
+  // Add this function to your component
+  const handleInitiateCall = (contactPublicKey) => {
+    if (!window.callService) {
+      alert('Call service not available');
+      return;
+    }
+
+    window.callService.initiateCall(contactPublicKey).catch(error => {
+      console.error('Failed to initiate call:', error);
+      alert('Could not start the call. Please try again.');
+    });
+  };
 
   // Initialize app data
   useEffect(() => {
@@ -452,7 +501,7 @@ export default function App() {
       const fileMessages = currentMessages.filter(msg => msg.isFile);
       console.log('File messages:', fileMessages.length);
       fileMessages.forEach((file, i) => {
-        console.log(`File ${i+1}:`, file.id, file.isFile, file.fileID);
+        console.log(`File ${i + 1}:`, file.id, file.isFile, file.fileID);
       });
     }
   }, [currentMessages]);
@@ -460,6 +509,10 @@ export default function App() {
   return (
     <KeyGuard>
       <div className="h-screen bg-[#0E0F14] text-white flex flex-col md:flex-row overflow-hidden">
+
+        <CallHandler />
+
+
         {/* Sidebar (conversations list) */}
         <div className={`w-full md:w-1/4 border-r border-gray-700 flex flex-col h-full md:h-full overflow-hidden ${(!showConversationList || activeTab !== 'messages') && 'hidden md:flex'}`}>
           <div className="p-6 flex items-center justify-between border-b border-gray-800">
@@ -576,6 +629,14 @@ export default function App() {
                     <div className="font-semibold text-lg text-white tracking-wide">
                       {getContactName(selectedConversation)}
                     </div>
+
+                    <div className="ml-3">
+                      <CallButton
+                        contactPublicKey={selectedConversation}
+                        contactName={getContactName(selectedConversation)}
+                        onInitiateCall={handleInitiateCall}
+                      />
+                    </div>
                   </div>
                   <div className="w-8 md:hidden" /> {/* Spacer for alignment */}
                 </div>
@@ -596,12 +657,15 @@ export default function App() {
                             currentUserKey={publicKey}
                           />
                         ) : (
-                          <>
-                            <div className={`inline-block p-3 px-5 rounded-2xl ${msg.sender === publicKey ? 'bg-blue-600' : 'bg-gray-800'}`}>
-                              {msg.content}
-                            </div>
-                            <div className="text-xs text-gray-500 mt-2">{formatMessageTime(msg.timestamp)}</div>
-                          </>
+                          // Only render message if it's not a call signal
+                          !msg.content.includes('CALL_SIGNAL:') && (
+                            <>
+                              <div className={`inline-block p-3 px-5 rounded-2xl ${msg.sender === publicKey ? 'bg-blue-600' : 'bg-gray-800'}`}>
+                                {msg.content}
+                              </div>
+                              <div className="text-xs text-gray-500 mt-2">{formatMessageTime(msg.timestamp)}</div>
+                            </>
+                          )
                         )}
                       </div>
                     ))
