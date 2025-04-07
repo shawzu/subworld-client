@@ -179,212 +179,212 @@ class ConversationManager {
     }
   }
 
- /**
- * Fetch new messages from the network
- * @returns {Promise<number>} - Number of new messages
- */
-async fetchNewMessages() {
-  try {
-    // Rate limiting - only fetch messages every 30 seconds at most
-    const now = Date.now();
-    if (now - this._lastFetchTime < 30000) {
-      console.log('Skipping message fetch - fetched recently');
-      return 0;
-    }
-    this._lastFetchTime = now;
-    console.log('Fetching messages (rate limited)...');
-
-    // Check if network service is available
-    if (!subworldNetwork) {
-      console.warn('Network service unavailable');
-      return 0;
-    }
-
-    // Check if user key is available
-    if (!this.currentUserKey) {
-      console.warn('No current user key available');
-      return 0;
-    }
-
-    // Get messages from network service with explicit try/catch
-    let messages;
+  /**
+  * Fetch new messages from the network
+  * @returns {Promise<number>} - Number of new messages
+  */
+  async fetchNewMessages() {
     try {
-      messages = await subworldNetwork.fetchMessages();
-      console.log('Messages received:', messages ? (Array.isArray(messages) ? messages.length : 'non-array') : 'null');
-    } catch (fetchError) {
-      console.error('Error in network fetchMessages:', fetchError);
-      return 0;
-    }
+      // Rate limiting - only fetch messages every 30 seconds at most
+      const now = Date.now();
+      if (now - this._lastFetchTime < 30000) {
+        console.log('Skipping message fetch - fetched recently');
+        return 0;
+      }
+      this._lastFetchTime = now;
+      console.log('Fetching messages (rate limited)...');
 
-    // Validate that messages is an array
-    if (!messages) {
-      console.warn('No messages returned');
-      return 0;
-    }
-
-    if (!Array.isArray(messages)) {
-      console.warn('Invalid messages format:', typeof messages);
-      return 0;
-    }
-
-    // Process new messages
-    let newMessageCount = 0;
-    const processedIds = [];
-
-    for (let i = 0; i < messages.length; i++) {
-      const message = messages[i];
-
-      // Skip invalid messages
-      if (!message || typeof message !== 'object') {
-        console.warn('Skipping invalid message at index', i, ':', message);
-        continue;
+      // Check if network service is available
+      if (!subworldNetwork) {
+        console.warn('Network service unavailable');
+        return 0;
       }
 
-      // Ensure message has required properties
-      if (!message.sender || !message.recipient) {
-        console.warn('Message missing sender or recipient at index', i, ':', message);
-        continue;
+      // Check if user key is available
+      if (!this.currentUserKey) {
+        console.warn('No current user key available');
+        return 0;
       }
 
+      // Get messages from network service with explicit try/catch
+      let messages;
       try {
-        // Check if this is a file metadata message
-        if (typeof message.content === 'string') {
-          try {
-            const potentialMetadata = JSON.parse(message.content);
-            if (potentialMetadata && potentialMetadata.messageType === 'file') {
-              // This is a file metadata message - convert it to a file message
-              message.isFile = true;
-              message.fileID = potentialMetadata.fileID;
-              message.fileName = potentialMetadata.fileName;
-              message.fileType = potentialMetadata.fileType;
-              message.fileSize = potentialMetadata.fileSize;
-              // Update the content to show it's a file
-              message.content = `[File: ${potentialMetadata.fileName}]`;
-              console.log('Converted message to file message:', message);
-            }
-          } catch (jsonError) {
-            // Not JSON, just a regular message
-          }
-        }
+        messages = await subworldNetwork.fetchMessages();
+        console.log('Messages received:', messages ? (Array.isArray(messages) ? messages.length : 'non-array') : 'null');
+      } catch (fetchError) {
+        console.error('Error in network fetchMessages:', fetchError);
+        return 0;
+      }
 
-        // Determine the other party (sender if received, recipient if sent)
-        const contactPublicKey = message.sender === this.currentUserKey
-          ? message.recipient
-          : message.sender;
+      // Validate that messages is an array
+      if (!messages) {
+        console.warn('No messages returned');
+        return 0;
+      }
 
-        // Get or create conversation
-        const conversation = this.createOrUpdateConversation(contactPublicKey);
+      if (!Array.isArray(messages)) {
+        console.warn('Invalid messages format:', typeof messages);
+        return 0;
+      }
 
-        // Skip if no valid conversation
-        if (!conversation || !conversation.messages) {
-          console.warn('Invalid conversation for', contactPublicKey);
+      // Process new messages
+      let newMessageCount = 0;
+      const processedIds = [];
+
+      for (let i = 0; i < messages.length; i++) {
+        const message = messages[i];
+
+        // Skip invalid messages
+        if (!message || typeof message !== 'object') {
+          console.warn('Skipping invalid message at index', i, ':', message);
           continue;
         }
 
-        // Generate message ID if missing
-        if (!message.id) {
-          message.id = `gen-${Date.now()}-${i}`;
+        // Ensure message has required properties
+        if (!message.sender || !message.recipient) {
+          console.warn('Message missing sender or recipient at index', i, ':', message);
+          continue;
         }
 
-        // Check if message already exists in conversation
-        const messageExists = conversation.messages.some(m => m && m.id === message.id);
-
-        if (!messageExists) {
-          // Add message to conversation
-          conversation.messages.push(message);
-
-          // Update last message time safely
-          const messageTime = new Date(message.timestamp || Date.now());
-          const lastTime = conversation.lastMessageTime ? new Date(conversation.lastMessageTime) : new Date(0);
-          if (messageTime > lastTime) {
-            conversation.lastMessageTime = message.timestamp || new Date().toISOString();
-          }
-
-          // Increment unread count for received messages
-          if (message.sender !== this.currentUserKey) {
-            conversation.unreadCount = (conversation.unreadCount || 0) + 1;
-            newMessageCount++;
-
-            // Collect ID for delivery receipt
-            if (message.id) {
-              processedIds.push(message.id);
+        try {
+          // Check if this is a file metadata message
+          if (typeof message.content === 'string') {
+            try {
+              const potentialMetadata = JSON.parse(message.content);
+              if (potentialMetadata && potentialMetadata.messageType === 'file') {
+                // This is a file metadata message - convert it to a file message
+                message.isFile = true;
+                message.fileID = potentialMetadata.fileID;
+                message.fileName = potentialMetadata.fileName;
+                message.fileType = potentialMetadata.fileType;
+                message.fileSize = potentialMetadata.fileSize;
+                // Update the content to show it's a file
+                message.content = `[File: ${potentialMetadata.fileName}]`;
+                console.log('Converted message to file message:', message);
+              }
+            } catch (jsonError) {
+              // Not JSON, just a regular message
             }
           }
+
+          // Determine the other party (sender if received, recipient if sent)
+          const contactPublicKey = message.sender === this.currentUserKey
+            ? message.recipient
+            : message.sender;
+
+          // Get or create conversation
+          const conversation = this.createOrUpdateConversation(contactPublicKey);
+
+          // Skip if no valid conversation
+          if (!conversation || !conversation.messages) {
+            console.warn('Invalid conversation for', contactPublicKey);
+            continue;
+          }
+
+          // Generate message ID if missing
+          if (!message.id) {
+            message.id = `gen-${Date.now()}-${i}`;
+          }
+
+          // Check if message already exists in conversation
+          const messageExists = conversation.messages.some(m => m && m.id === message.id);
+
+          if (!messageExists) {
+            // Add message to conversation
+            conversation.messages.push(message);
+
+            // Update last message time safely
+            const messageTime = new Date(message.timestamp || Date.now());
+            const lastTime = conversation.lastMessageTime ? new Date(conversation.lastMessageTime) : new Date(0);
+            if (messageTime > lastTime) {
+              conversation.lastMessageTime = message.timestamp || new Date().toISOString();
+            }
+
+            // Increment unread count for received messages
+            if (message.sender !== this.currentUserKey) {
+              conversation.unreadCount = (conversation.unreadCount || 0) + 1;
+              newMessageCount++;
+
+              // Collect ID for delivery receipt
+              if (message.id) {
+                processedIds.push(message.id);
+              }
+            }
+          }
+        } catch (messageError) {
+          // Catch errors for individual messages to prevent full failure
+          console.error('Error processing message at index', i, ':', messageError);
         }
-      } catch (messageError) {
-        // Catch errors for individual messages to prevent full failure
-        console.error('Error processing message at index', i, ':', messageError);
       }
-    }
 
-    // Mark messages as delivered on the server if any were found
-    if (newMessageCount > 0 && processedIds.length > 0) {
+      // Mark messages as delivered on the server if any were found
+      if (newMessageCount > 0 && processedIds.length > 0) {
+        try {
+          // Fire and forget - don't wait for this to complete
+          subworldNetwork.markMessagesAsDelivered(this.currentUserKey, processedIds)
+            .catch(err => console.log('Failed to mark messages as delivered:', err));
+        } catch (markError) {
+          console.error('Error initiating mark as delivered:', markError);
+        }
+      }
+
       try {
-        // Fire and forget - don't wait for this to complete
-        subworldNetwork.markMessagesAsDelivered(this.currentUserKey, processedIds)
-          .catch(err => console.log('Failed to mark messages as delivered:', err));
-      } catch (markError) {
-        console.error('Error initiating mark as delivered:', markError);
+        // Update last fetch time
+        this.lastFetch = new Date();
+
+        // Sort conversations
+        this._sortConversationsByTime();
+
+        // Persist changes
+        this._persistConversations();
+      } catch (updateError) {
+        console.error('Error updating conversation state:', updateError);
       }
+
+      return newMessageCount;
+    } catch (error) {
+      // Use a safer error logging approach
+      console.error('Error in fetchNewMessages:', error ? error.message : 'Unknown error');
+
+      // Additional debug info that won't cause errors
+      if (error) {
+        console.log('Error name:', error.name);
+        console.log('Error stack:', error.stack);
+      }
+
+      return 0;
     }
-
-    try {
-      // Update last fetch time
-      this.lastFetch = new Date();
-
-      // Sort conversations
-      this._sortConversationsByTime();
-
-      // Persist changes
-      this._persistConversations();
-    } catch (updateError) {
-      console.error('Error updating conversation state:', updateError);
-    }
-
-    return newMessageCount;
-  } catch (error) {
-    // Use a safer error logging approach
-    console.error('Error in fetchNewMessages:', error ? error.message : 'Unknown error');
-
-    // Additional debug info that won't cause errors
-    if (error) {
-      console.log('Error name:', error.name);
-      console.log('Error stack:', error.stack);
-    }
-
-    return 0;
   }
-}
 
- 
+
 
   /**
-  * Send a file in a conversation through the network
-  * @param {string} contactPublicKey - Recipient's public key
-  * @param {File} file - The file to send
-  * @returns {Promise<Object>} - The sent message
-  */
+ * Send a file in a conversation through the network
+ * @param {string} contactPublicKey - Recipient's public key
+ * @param {File} file - The file to send
+ * @returns {Promise<Object>} - The sent message
+ */
   async sendFile(contactPublicKey, file) {
     try {
       // Ensure conversation exists
       const conversation = this.createOrUpdateConversation(contactPublicKey);
-  
+
       // Show original file size
       const fileSizeFormatted = this.formatFileSize(file.size);
-  
-      // Upload the file to the network
+
+      // Upload the file to the network (now with encryption)
       const uploadResult = await subworldNetwork.uploadFile(
         contactPublicKey,
         file
       );
-  
+
       if (!uploadResult.success || !uploadResult.fileId) {
         throw new Error('Failed to upload file to the network');
       }
-  
+
       // Create a unique ID for this message
       const messageId = `file-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-  
+
       // Create message object with file reference
       const message = {
         id: messageId,
@@ -394,25 +394,24 @@ async fetchNewMessages() {
         timestamp: new Date().toISOString(),
         status: 'sent',
         isFile: true,
-        fileID: uploadResult.fileId, // Store the file ID from the network
+        fileID: uploadResult.fileId,
         fileName: file.name,
         fileType: file.type,
         fileSize: file.size
       };
-  
+
       // Add to conversation
       conversation.messages.push(message);
       conversation.lastMessageTime = message.timestamp;
-  
+
       // Update conversation order
       this._sortConversationsByTime();
-  
+
       // Persist changes
       this._persistConversations();
-  
-      // IMPORTANT: Send a message with the file metadata, not just a notification
+
+      // Send a message with the file metadata
       try {
-        // Create a message that includes file metadata
         const fileMetadata = {
           messageType: 'file',
           fileID: uploadResult.fileId,
@@ -420,7 +419,7 @@ async fetchNewMessages() {
           fileType: file.type,
           fileSize: file.size
         };
-        
+
         // Send as JSON string
         await this.sendMessage(
           contactPublicKey,
@@ -429,7 +428,7 @@ async fetchNewMessages() {
       } catch (networkError) {
         console.log('Network notification failed, but file was uploaded');
       }
-  
+
       return message;
     } catch (error) {
       console.error('Error sending file:', error);

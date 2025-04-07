@@ -21,49 +21,50 @@ export default function FileMessage({ message, formatMessageTime, currentUserKey
     const handleDownload = async () => {
         try {
             setDownloading(true);
-            setDownloadProgress(10);
+            setDownloadProgress(10); // Start progress
 
-            // Get user ID from the message
-            const userID = message.recipient === currentUserKey ?
-                message.recipient : message.sender;
+            // Get current user's key
+            const userID = message.recipient === currentUserKey ? message.recipient : message.sender;
 
-            console.log('Downloading file for user ID:', userID, 'File ID:', message.fileID);
-
+            // Using the modified network service to download the file with decryption
             if (message.fileID) {
                 setDownloadProgress(30);
 
-                // Download the file contents directly (skip metadata fetch to simplify)
-                console.log('Starting file download...');
-                const fileBlob = await subworldNetwork.downloadFile(userID, message.fileID);
-                console.log('File downloaded, size:', fileBlob.size, 'bytes, type:', fileBlob.type);
+                // Get file metadata first
+                const metadata = await subworldNetwork.getFileMetadata(userID, message.fileID);
+                setDownloadProgress(50);
+
+                // Download and decrypt the file contents
+                // Pass the sender's key for decryption
+                const fileBlob = await subworldNetwork.downloadFile(
+                    userID,
+                    message.fileID,
+                    message.sender // Pass sender's key for decryption
+                );
                 setDownloadProgress(90);
 
-                // Create a download link with the file's original mime type
+                // Create download link
                 const url = URL.createObjectURL(fileBlob);
-
-                // Create download link and trigger download
                 const link = document.createElement('a');
                 link.href = url;
                 link.download = message.fileName || 'download.file';
-
-                // Log download details
-                console.log('Download link created:', {
-                    filename: link.download,
-                    type: fileBlob.type,
-                    size: fileBlob.size
-                });
-
-                // Add to DOM, click, and remove
                 document.body.appendChild(link);
                 link.click();
                 document.body.removeChild(link);
 
-                // Clean up object URL after a delay
-                setTimeout(() => {
-                    URL.revokeObjectURL(url);
-                    console.log('Object URL revoked');
-                }, 100);
+                // Clean up the URL object
+                setTimeout(() => URL.revokeObjectURL(url), 100);
 
+                setDownloadProgress(100);
+            }
+            // Fall back to the data URL method if fileID is not present
+            else if (message.fileData) {
+                const link = document.createElement('a');
+                link.href = message.fileData;
+                link.download = message.fileName || 'download.file';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
                 setDownloadProgress(100);
             }
             else {
@@ -74,6 +75,7 @@ export default function FileMessage({ message, formatMessageTime, currentUserKey
             alert('Failed to download file. Please try again.');
         } finally {
             setDownloading(false);
+            // Reset progress after a delay
             setTimeout(() => setDownloadProgress(0), 1000);
         }
     };

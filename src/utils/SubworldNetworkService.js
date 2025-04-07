@@ -1,6 +1,9 @@
 'use client'
 
 import LocalKeyStorageManager from './LocalKeyStorageManager'
+import nacl from 'tweetnacl';
+
+
 
 class SubworldNetworkService {
   constructor() {
@@ -715,22 +718,37 @@ class SubworldNetworkService {
   }
 
   /**
-  * Upload a file to the network
-  * @param {string} recipientPublicKey - Recipient's public key
-  * @param {File} file - The file to upload
-  * @returns {Promise<Object>} - Upload result
-  */
+ * Upload a file to the network with encryption
+ * @param {string} recipientPublicKey - Recipient's public key
+ * @param {File} file - The file to upload
+ * @returns {Promise<Object>} - Upload result
+ */
   async uploadFile(recipientPublicKey, file) {
     try {
       if (!this.currentNode) {
         throw new Error('No node selected');
       }
 
+      // Read the file as an ArrayBuffer for encryption
+      const fileArrayBuffer = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsArrayBuffer(file);
+      });
+
+      // Convert to Uint8Array for encryption
+      const fileData = new Uint8Array(fileArrayBuffer);
+
+      // Encrypt the file data with recipient's key
+      const encryptedData = await this.encryptFileData(fileData, recipientPublicKey);
+
+      // Convert encrypted data to a Blob for upload
+      const encryptedBlob = new Blob([encryptedData]);
+
       // Create FormData for the file upload
       const formData = new FormData();
-
-      // Important: Make sure the file is being sent as raw binary
-      formData.append('file', file, file.name);
+      formData.append('file', encryptedBlob, file.name);
       formData.append('recipient_id', recipientPublicKey);
       formData.append('sender_id', this.keyPair.publicKeyDisplay);
       formData.append('file_name', file.name);
@@ -741,12 +759,12 @@ class SubworldNetworkService {
 
       // Use proxy instead of direct node connection
       const nodeId = this.currentNode.id || 'bootstrap1';
+      console.log(`Uploading encrypted file via proxy: ${this.proxyBaseUrl}${nodeId}/files/upload`);
 
-      // Set up fetch to properly handle binary data
+      // Upload the encrypted file
       const response = await fetch(`${this.proxyBaseUrl}${nodeId}/files/upload`, {
         method: 'POST',
-        body: formData,
-        // Do not set Content-Type header - the browser will set it with boundary for FormData
+        body: formData
       });
 
       if (!response.ok) {
@@ -764,6 +782,38 @@ class SubworldNetworkService {
       };
     } catch (error) {
       console.error('Error uploading file:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Encrypt file data
+   * @param {Uint8Array} fileData - Raw file data to encrypt
+   * @param {string} recipientPublicKey - Recipient's public key
+   * @returns {Promise<Uint8Array>} - Encrypted file data
+   */
+  async encryptFileData(fileData, recipientPublicKey) {
+    try {
+      // Get encryption key derived from sender and recipient keys
+      const encryptionKey = await LocalKeyStorageManager.deriveSharedKeyFromDisplayKeys(
+        this.keyPair.publicKeyDisplay,
+        recipientPublicKey
+      );
+
+      // Create a nonce for encryption
+      const nonce = nacl.randomBytes(nacl.secretbox.nonceLength);
+
+      // Encrypt the file data
+      const encryptedFile = nacl.secretbox(fileData, nonce, encryptionKey);
+
+      // Combine nonce and encrypted data into a single array
+      const fullMessage = new Uint8Array(nonce.length + encryptedFile.length);
+      fullMessage.set(nonce);
+      fullMessage.set(encryptedFile, nonce.length);
+
+      return fullMessage;
+    } catch (error) {
+      console.error('File encryption failed:', error);
       throw error;
     }
   }
@@ -804,13 +854,13 @@ class SubworldNetworkService {
   }
 
   /**
-  * Download a file from the network
-  * @param {string} userID - User ID
-  * @param {string} fileID - File ID
-  * @param {number} chunkIndex - Chunk index (optional)
-  * @returns {Promise<Blob>} - File data as blob
-  */
-  async downloadFile(userID, fileID, chunkIndex = 0) {
+ * Download a file from the network with decryption
+ * @param {string} userID - User ID
+ * @param {string} fileID - File ID
+ * @param {string} senderKey - Sender's public key for decryption
+ * @returns {Promise<Blob>} - Decrypted file data as blob
+ */
+  async downloadFile(userID, fileID, senderKey) {
     try {
       if (!this.currentNode) {
         throw new Error('No node selected');
@@ -818,15 +868,14 @@ class SubworldNetworkService {
 
       // Use proxy instead of direct node connection
       const nodeId = this.currentNode.id || 'bootstrap1';
-      const endpoint = `${this.proxyBaseUrl}${nodeId}/files/get?user_id=${encodeURIComponent(userID)}&file_id=${encodeURIComponent(fileID)}&chunk=${chunkIndex}`;
+      const endpoint = `${this.proxyBaseUrl}${nodeId}/files/get?user_id=${encodeURIComponent(userID)}&file_id=${encodeURIComponent(fileID)}&chunk=0`;
 
-      console.log('Downloading file chunk:', endpoint);
+      console.log('Downloading encrypted file:', endpoint);
 
-      // IMPORTANT: Use fetch with { responseType: 'blob' } to ensure binary handling
       const response = await fetch(endpoint, {
         method: 'GET',
         headers: {
-          'Accept': 'application/octet-stream' // Indicate we want binary data
+          'Accept': 'application/octet-stream'
         }
       });
 
@@ -836,20 +885,63 @@ class SubworldNetworkService {
         throw new Error(`Failed to download file: ${response.status}`);
       }
 
-      // Get the file as a blob directly
-      const blob = await response.blob();
+      // Get the encrypted file as an ArrayBuffer
+      const encryptedData = await response.arrayBuffer();
+      console.log(`Received encrypted file: size=${encryptedData.byteLength} bytes`);
 
-      // Log some details about the received blob for debugging
-      console.log(`Received file blob: type=${blob.type}, size=${blob.size} bytes`);
+      // Decrypt the file data
+      const decryptedData = await this.decryptFileData(
+        new Uint8Array(encryptedData),
+        senderKey
+      );
 
-      return blob;
+      // Create a blob with the original file type (if available)
+      const fileMetadata = await this.getFileMetadata(userID, fileID);
+      const fileType = fileMetadata?.file_type || 'application/octet-stream';
+
+      // Create a blob with the decrypted data
+      const decryptedBlob = new Blob([decryptedData], { type: fileType });
+
+      return decryptedBlob;
     } catch (error) {
       console.error('Error downloading file:', error);
       throw error;
     }
   }
 
-  
+  /**
+   * Decrypt file data
+   * @param {Uint8Array} encryptedData - Encrypted file data
+   * @param {string} senderKey - Sender's public key
+   * @returns {Promise<Uint8Array>} - Decrypted file data
+   */
+  async decryptFileData(encryptedData, senderKey) {
+    try {
+      // Extract nonce from the beginning of the encrypted data
+      const nonce = encryptedData.slice(0, nacl.secretbox.nonceLength);
+      const encryptedFile = encryptedData.slice(nacl.secretbox.nonceLength);
+
+      // Get decryption key derived from sender and recipient keys
+      const decryptionKey = await LocalKeyStorageManager.deriveSharedKeyFromDisplayKeys(
+        senderKey,
+        this.keyPair.publicKeyDisplay
+      );
+
+      // Decrypt the file data
+      const decryptedFile = nacl.secretbox.open(encryptedFile, nonce, decryptionKey);
+
+      if (!decryptedFile) {
+        throw new Error('File decryption failed. Invalid data or wrong key.');
+      }
+
+      return decryptedFile;
+    } catch (error) {
+      console.error('File decryption failed:', error);
+      throw error;
+    }
+  }
+
+
   /**
  * Check the health of a specific node via proxy
  * @param {string} nodeId - The ID of the node to check
