@@ -22,7 +22,7 @@ import { File } from 'lucide-react'
 
 import CallButton from '../components/CallButton';
 import CallHandler from '../components/CallHandler';
-
+import CallMessage from '../components/CallMessage'
 
 export default function App() {
   const messagesEndRef = useRef(null)
@@ -50,7 +50,7 @@ export default function App() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
   }
 
- 
+
   useEffect(() => {
     // Share services with each other
     const setupServices = () => {
@@ -59,12 +59,12 @@ export default function App() {
         import('../../utils/VoiceService').then(module => {
           window.voiceService = module.default;
           console.log('Voice service loaded globally');
-          
+
           // Initialize voice service
           window.voiceService.initialize().catch(err => {
             console.warn('Failed to initialize voice service:', err);
           });
-          
+
           // Connect voice service with conversation manager if available
           if (window.conversationManager) {
             console.log('Connecting voice service with conversation manager');
@@ -78,6 +78,33 @@ export default function App() {
     // Start the service connection process
     setupServices();
   }, []);
+
+  const joinCall = async (callId) => {
+    console.log('Joining call with ID:', callId);
+
+    try {
+      // Check if voice service is available
+      if (!window.voiceService) {
+        console.error('Voice service not available');
+        alert('Voice service not available. Please try again later.');
+        throw new Error('Voice service not available');
+      }
+      
+      // Ensure service is initialized
+      if (!window.voiceService.initialized) {
+        console.log('Voice service not yet initialized, initializing now...');
+        await window.voiceService.initialize();
+      }
+      
+      // Join the call
+      await window.voiceService.joinCall(callId);
+      return true;
+    } catch (error) {
+      console.error('Failed to join call:', error);
+      alert(error.message || 'Could not join the call. Please try again.');
+      throw error;
+    }
+  };
 
 
   // Add this function to your component
@@ -674,16 +701,20 @@ export default function App() {
                             formatMessageTime={formatMessageTime}
                             currentUserKey={publicKey}
                           />
-                        ) : (
-                          // Only render message if it's not a call signal
-                          !msg.content.includes('CALL_SIGNAL:') && (
-                            <>
-                              <div className={`inline-block p-3 px-5 rounded-2xl ${msg.sender === publicKey ? 'bg-blue-600' : 'bg-gray-800'}`}>
-                                {msg.content}
-                              </div>
-                              <div className="text-xs text-gray-500 mt-2">{formatMessageTime(msg.timestamp)}</div>
-                            </>
-                          )
+                        ) : msg.content.includes('CALL_INVITATION:') ? (
+                          <CallMessage
+                            message={msg}
+                            formatMessageTime={formatMessageTime}
+                            currentUserKey={publicKey}
+                            onJoinCall={joinCall}
+                          />
+                        ) : !msg.content.includes('CALL_SIGNAL:') && (
+                          <>
+                            <div className={`inline-block p-3 px-5 rounded-2xl ${msg.sender === publicKey ? 'bg-blue-600' : 'bg-gray-800'}`}>
+                              {msg.content}
+                            </div>
+                            <div className="text-xs text-gray-500 mt-2">{formatMessageTime(msg.timestamp)}</div>
+                          </>
                         )}
                       </div>
                     ))

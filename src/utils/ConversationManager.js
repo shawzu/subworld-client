@@ -255,7 +255,13 @@ class ConversationManager {
  * @param {Object} signalData - Call signal data
  * @returns {Promise<boolean>} - Success status
  */
-async sendCallSignal(recipientPublicKey, signalData) {
+ /**
+ * Send a call signal message
+ * @param {string} recipientPublicKey - Recipient's public key 
+ * @param {Object} signalData - Call signal data
+ * @returns {Promise<boolean>} - Success status
+ */
+ async sendCallSignal(recipientPublicKey, signalData) {
   try {
     console.log("Sending call signal:", signalData.type);
     // Add prefix to identify as call signal
@@ -268,6 +274,36 @@ async sendCallSignal(recipientPublicKey, signalData) {
   } catch (error) {
     console.error('Failed to send call signal:', error);
     return false;
+  }
+}
+
+
+/**
+ * Process WebRTC signaling messages
+ * @param {Object} message - The message to process
+ * @private
+ */
+_processWebRTCSignal(message) {
+  if (typeof window === 'undefined' || !window.voiceService) {
+    return;
+  }
+  
+  try {
+    // Extract the JSON part after the prefix
+    const signalString = message.content.substring(this.callSignalPrefix.length);
+    const signalData = JSON.parse(signalString);
+    
+    // Log the signal type for debugging
+    console.log('Processing call signal type:', signalData.type);
+    
+    // Process the signaling message with the voice service
+    if (window.voiceService && typeof window.voiceService.processSignalingMessage === 'function') {
+      window.voiceService.processSignalingMessage(message.sender, signalData);
+    } else {
+      console.warn('Voice service not available for processing signal');
+    }
+  } catch (error) {
+    console.warn('Error processing WebRTC signal:', error);
   }
 }
 

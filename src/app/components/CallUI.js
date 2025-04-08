@@ -6,8 +6,6 @@ import {
   PhoneOff,
   Mic,
   MicOff,
-  Volume2,
-  VolumeX,
   X
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -15,8 +13,6 @@ import { motion, AnimatePresence } from 'framer-motion'
 const CallUI = ({
   callState,
   contactName,
-  onAccept,
-  onDecline,
   onHangUp,
   onToggleMute,
   isMuted,
@@ -65,8 +61,6 @@ const CallUI = ({
               <div>
                 <h3 className="font-medium text-white">{contactName}</h3>
                 <p className="text-sm text-gray-300">
-                  {callState === 'incoming' && 'Incoming call...'}
-                  {callState === 'outgoing' && 'Calling...'}
                   {callState === 'connected' && callDuration}
                   {callState === 'ended' && 'Call ended'}
                 </p>
@@ -98,24 +92,6 @@ const CallUI = ({
           </div>
 
           <div className="flex justify-center space-x-6">
-            {/* Incoming call buttons */}
-            {callState === 'incoming' && (
-              <>
-                <button
-                  onClick={onDecline}
-                  className="w-12 h-12 rounded-full bg-red-600 flex items-center justify-center text-white hover:bg-red-700 transition-colors"
-                >
-                  <PhoneOff size={20} />
-                </button>
-                <button
-                  onClick={onAccept}
-                  className="w-12 h-12 rounded-full bg-green-600 flex items-center justify-center text-white hover:bg-green-700 transition-colors"
-                >
-                  <Phone size={20} />
-                </button>
-              </>
-            )}
-
             {/* Connected call buttons */}
             {callState === 'connected' && (
               <>
@@ -134,16 +110,6 @@ const CallUI = ({
               </>
             )}
 
-            {/* Outgoing call buttons */}
-            {callState === 'outgoing' && (
-              <button
-                onClick={onHangUp}
-                className="w-12 h-12 rounded-full bg-red-600 flex items-center justify-center text-white hover:bg-red-700 transition-colors"
-              >
-                <PhoneOff size={20} />
-              </button>
-            )}
-
             {/* Call ended button */}
             {callState === 'ended' && (
               <button
@@ -154,21 +120,6 @@ const CallUI = ({
               </button>
             )}
           </div>
-
-          {/* Incoming call ring animation */}
-          {callState === 'incoming' && (
-            <div className="absolute -inset-1 bg-blue-500/20 rounded-lg animate-pulse z-[-1]"></div>
-          )}
-
-          {/* Outgoing call animation */}
-          {callState === 'outgoing' && (
-            <div className="absolute inset-0 rounded-lg z-[-1] overflow-hidden">
-              <div className="absolute inset-0 flex items-center justify-center">
-                <div className="w-16 h-16 rounded-full bg-blue-500/40 animate-ping"></div>
-                <div className="w-12 h-12 rounded-full bg-blue-500/60 absolute"></div>
-              </div>
-            </div>
-          )}
         </motion.div>
       )}
     </AnimatePresence>
