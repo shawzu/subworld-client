@@ -11,28 +11,38 @@ import CallUI from './CallUI'
  */
 const CallHandler = () => {
   const [callState, setCallState] = useState(null)
+  const [contactName, setContactName] = useState('Call')
   const [isMuted, setIsMuted] = useState(false)
   const [permissionError, setPermissionError] = useState(null)
   const [callDuration, setCallDuration] = useState(0)
   
   // Refs for audio elements
   const localAudioRef = useRef(null)
+  const remoteAudioRef = useRef(null)
   
   // Timer ref for call duration
   const durationTimerRef = useRef(null)
 
   // Set up event listeners when component mounts
   useEffect(() => {
+    console.log('CallHandler component mounted');
+    
     // Initialize voice service
-    voiceService.initialize().catch(error => {
-      console.error('Failed to initialize voice service:', error)
-      if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
-        setPermissionError('Microphone access was denied. Please allow microphone access to make calls.');
-      }
-    });
+    if (!voiceService.initialized) {
+      console.log('Initializing voice service from CallHandler');
+      voiceService.initialize().catch(error => {
+        console.error('Failed to initialize voice service:', error)
+        if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+          setPermissionError('Microphone access was denied. Please allow microphone access to make calls.');
+        }
+      });
+    } else {
+      console.log('Voice service was already initialized');
+    }
 
     // Start call duration timer when connected
     const startDurationTimer = () => {
+      console.log("Starting call duration timer");
       if (durationTimerRef.current) {
         clearInterval(durationTimerRef.current);
       }
@@ -45,6 +55,7 @@ const CallHandler = () => {
     
     // Clear duration timer
     const clearDurationTimer = () => {
+      console.log("Clearing call duration timer");
       if (durationTimerRef.current) {
         clearInterval(durationTimerRef.current);
         durationTimerRef.current = null;
@@ -59,6 +70,12 @@ const CallHandler = () => {
         case 'call_state_changed':
           console.log('Call state changed to:', data.state);
           setCallState(data.state)
+          
+          // Set contact name if available
+          if (data.contact && contactStore) {
+            const contact = contactStore.getContact(data.contact);
+            setContactName(contact?.alias || data.contact || 'Call');
+          }
 
           // Start or stop duration timer based on call state
           if (data.state === 'connected') {
@@ -71,51 +88,62 @@ const CallHandler = () => {
           if (data.state === 'ended') {
             // Wait for UI to show ended state before fully clearing
             setTimeout(() => {
-              if (callState === 'ended') {
-                setCallState(null)
-                setCallDuration(0)
-              }
-            }, 3000)
-          } else if (data.state === null) {
-            // Immediately clear if explicitly set to null
-            setCallState(null)
-            setCallDuration(0)
+              // Only reset if we're still in ended state
+              setCallState(prevState => {
+                if (prevState === 'ended') {
+                  return null;
+                }
+                return prevState;
+              });
+              setCallDuration(0);
+            }, 3000);
           }
-          break
+          break;
 
         case 'mute_changed':
           setIsMuted(data.isMuted)
-          break
+          break;
           
         case 'remote_stream_added':
-          // Add our stream to the audio element for monitoring
-          if (data.stream && localAudioRef.current) {
-            console.log('Setting local stream to audio element');
-            localAudioRef.current.srcObject = data.stream;
-            localAudioRef.current.play().catch(err => console.error('Error playing audio:', err));
+          // Add remote stream to the audio element
+          if (data.stream && remoteAudioRef.current) {
+            console.log('Setting remote stream to audio element');
+            remoteAudioRef.current.srcObject = data.stream;
+            remoteAudioRef.current.play().catch(err => console.error('Error playing remote audio:', err));
           }
-          break
+          
+          // Also attach local stream to local audio element for monitoring
+          if (voiceService.localStream && localAudioRef.current) {
+            console.log('Setting local stream to audio element');
+            localAudioRef.current.srcObject = voiceService.localStream;
+            localAudioRef.current.play().catch(err => console.error('Error playing local audio:', err));
+          }
+          break;
       }
     });
 
     // Clean up listener when component unmounts
     return () => {
+      console.log('CallHandler component unmounting, cleaning up');
       removeListener();
       clearDurationTimer();
 
       // End any active call
-      if (voiceService.isInCall()) {
+      if (voiceService && voiceService.isInCall && voiceService.isInCall()) {
+        console.log('Ending active call on unmount');
         voiceService.endCall();
       }
     };
-  }, [callState]);
+  }, []);
 
   // Handlers
   const handleHangUp = () => {
+    console.log('User initiated hang up');
     voiceService.endCall();
   };
 
   const handleToggleMute = () => {
+    console.log('User toggled mute');
     setIsMuted(voiceService.toggleMute());
   };
   
@@ -126,10 +154,22 @@ const CallHandler = () => {
     return `${mins}:${secs}`;
   };
 
+  // Debug - simulate audio activity
+  useEffect(() => {
+    if (callState === 'connected') {
+      const simulateAudioInterval = setInterval(() => {
+        console.log('Call active, duration:', formatDuration(callDuration));
+      }, 5000);
+      
+      return () => clearInterval(simulateAudioInterval);
+    }
+  }, [callState, callDuration]);
+
   return (
     <>
-      {/* Hidden audio element for our own voice (muted to prevent feedback) */}
+      {/* Hidden audio elements for audio playback */}
       <audio ref={localAudioRef} autoPlay playsInline muted style={{ display: 'none' }} />
+      <audio ref={remoteAudioRef} autoPlay playsInline style={{ display: 'none' }} />
       
       {/* Permission error notification */}
       {permissionError && (
@@ -148,7 +188,7 @@ const CallHandler = () => {
       {callState && (
         <CallUI
           callState={callState}
-          contactName="Call"
+          contactName={contactName}
           onHangUp={handleHangUp}
           onToggleMute={handleToggleMute}
           isMuted={isMuted}

@@ -31,15 +31,35 @@ export default function CallMessage({
   const callAge = new Date() - new Date(callData.startTime)
   const callExpired = callAge > 30 * 60 * 1000 // 30 minutes
   
+  // Get the sender's public key - needed for establishing the WebRTC connection
+  const contactPublicKey = isSentByCurrentUser ? message.recipient : message.sender
+  
   const handleJoinCall = () => {
     if (callExpired) return
     
+    console.log('Joining call with ID:', callData.callId, 'and contact:', contactPublicKey);
     setJoining(true)
-    onJoinCall(callData.callId)
-      .catch(error => {
-        console.error('Error joining call:', error)
-        setJoining(false)
-      })
+    
+    if (typeof window !== 'undefined' && window.voiceService) {
+      // Direct call to the voice service to avoid any potential issues
+      window.voiceService.joinCall(callData.callId, contactPublicKey)
+        .then(() => {
+          console.log('Successfully joined call');
+        })
+        .catch(error => {
+          console.error('Error joining call:', error);
+          setJoining(false);
+          alert('Failed to join call: ' + (error.message || 'Unknown error'));
+        });
+    } else {
+      // Fallback to the provided onJoinCall function
+      onJoinCall(callData.callId, contactPublicKey)
+        .catch(error => {
+          console.error('Error joining call:', error);
+          setJoining(false);
+          alert('Failed to join call: ' + (error.message || 'Unknown error'));
+        });
+    }
   }
   
   return (

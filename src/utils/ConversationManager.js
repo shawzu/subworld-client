@@ -19,7 +19,7 @@ class ConversationManager {
 
     this.callSignalPrefix = "CALL_SIGNAL:";
     this.isProcessingCallMessages = false;
-    
+
     // Reference to call service (will be set later)
     this.callService = null;
   }
@@ -64,7 +64,7 @@ class ConversationManager {
 
       // Auto-fetching disabled
       console.log('Auto-fetching disabled to reduce server load');
-      
+
       // Make self available globally for other services
       if (typeof window !== 'undefined') {
         window.conversationManager = this;
@@ -181,7 +181,7 @@ class ConversationManager {
             
             // Process the signaling message
             if (window.voiceService && typeof window.voiceService.processSignalingMessage === 'function') {
-              window.voiceService.processSignalingMessage(message.sender, signalData);
+              window.voiceService.processSignalingMessage(message.sender, signalData.data || signalData);
             } else {
               console.warn('Call service not available for processing signal');
             }
@@ -196,48 +196,32 @@ class ConversationManager {
       this.isProcessingCallMessages = false;
     }
   }
-  
-  /**
+
+   /**
    * Process a new message and handle any special message types (like call signals)
    * @param {Object} message - The message to process
    * @private
    */
-  _processMessage(message) {
+   _processMessage(message) {
     // Skip processing our own messages
     if (message.sender === this.currentUserKey) return;
     
     try {
       // Check if this is a call signaling message
       if (typeof message.content === 'string' && message.content.startsWith(this.callSignalPrefix)) {
-        console.log('Found call signal in _processMessage');
+        console.log('Found call signal in _processMessage:', message.content.substring(0, 100) + '...');
         
         try {
           // Extract the signaling data
           const signalString = message.content.substring(this.callSignalPrefix.length);
           const signalData = JSON.parse(signalString);
           
-          // Check if this is a WebRTC signal
-          if (signalData.type === 'webrtc_signal') {
-            // Process WebRTC signal immediately
-            if (typeof window !== 'undefined' && window.voiceService) {
+          // Process WebRTC signal immediately
+          if (typeof window !== 'undefined' && window.voiceService) {
+            if (signalData.data) {
               window.voiceService.processSignalingMessage(message.sender, signalData.data);
-            }
-          }
-          else if (signalData.type === 'call_start') {
-            // Legacy call start
-            if (typeof window !== 'undefined' && window.voiceService) {
-              window.voiceService.processCallSignal(message.sender, {
-                type: 'call_start',
-                callSessionId: message.id
-              });
-            }
-          }
-          else if (signalData.type === 'call_end') {
-            // Legacy call end
-            if (typeof window !== 'undefined' && window.voiceService) {
-              window.voiceService.processCallSignal(message.sender, {
-                type: 'call_end'
-              });
+            } else {
+              window.voiceService.processSignalingMessage(message.sender, signalData);
             }
           }
         } catch (err) {
@@ -248,64 +232,57 @@ class ConversationManager {
       console.error('Error in message processor:', error);
     }
   }
-  
+
   /**
- * Send a call signal message
- * @param {string} recipientPublicKey - Recipient's public key 
- * @param {Object} signalData - Call signal data
- * @returns {Promise<boolean>} - Success status
- */
- /**
- * Send a call signal message
- * @param {string} recipientPublicKey - Recipient's public key 
- * @param {Object} signalData - Call signal data
- * @returns {Promise<boolean>} - Success status
- */
- async sendCallSignal(recipientPublicKey, signalData) {
-  try {
-    console.log("Sending call signal:", signalData.type);
-    // Add prefix to identify as call signal
-    const signalMessage = `CALL_SIGNAL:${JSON.stringify(signalData)}`;
-    
-    // Send using regular message channel
-    await this.sendMessage(recipientPublicKey, signalMessage);
-    console.log("Call signal sent successfully");
-    return true;
-  } catch (error) {
-    console.error('Failed to send call signal:', error);
-    return false;
-  }
-}
-
-
-/**
- * Process WebRTC signaling messages
- * @param {Object} message - The message to process
- * @private
- */
-_processWebRTCSignal(message) {
-  if (typeof window === 'undefined' || !window.voiceService) {
-    return;
-  }
-  
-  try {
-    // Extract the JSON part after the prefix
-    const signalString = message.content.substring(this.callSignalPrefix.length);
-    const signalData = JSON.parse(signalString);
-    
-    // Log the signal type for debugging
-    console.log('Processing call signal type:', signalData.type);
-    
-    // Process the signaling message with the voice service
-    if (window.voiceService && typeof window.voiceService.processSignalingMessage === 'function') {
-      window.voiceService.processSignalingMessage(message.sender, signalData);
-    } else {
-      console.warn('Voice service not available for processing signal');
+   * Send a call signal message
+   * @param {string} recipientPublicKey - Recipient's public key 
+   * @param {Object} signalData - Call signal data
+   * @returns {Promise<boolean>} - Success status
+   */
+  async sendCallSignal(recipientPublicKey, signalData) {
+    try {
+      console.log("Sending call signal:", signalData.type || signalData.data?.type);
+      // Add prefix to identify as call signal
+      const signalMessage = `${this.callSignalPrefix}${JSON.stringify(signalData)}`;
+      
+      // Send using regular message channel
+      await this.sendMessage(recipientPublicKey, signalMessage);
+      console.log("Call signal sent successfully");
+      return true;
+    } catch (error) {
+      console.error('Failed to send call signal:', error);
+      return false;
     }
-  } catch (error) {
-    console.warn('Error processing WebRTC signal:', error);
   }
-}
+
+  /**
+   * Process WebRTC signaling messages
+   * @param {Object} message - The message to process
+   * @private
+   */
+  _processWebRTCSignal(message) {
+    if (typeof window === 'undefined' || !window.voiceService) {
+      return;
+    }
+
+    try {
+      // Extract the JSON part after the prefix
+      const signalString = message.content.substring(this.callSignalPrefix.length);
+      const signalData = JSON.parse(signalString);
+
+      // Log the signal type for debugging
+      console.log('Processing call signal type:', signalData.type);
+
+      // Process the signaling message with the voice service
+      if (window.voiceService && typeof window.voiceService.processSignalingMessage === 'function') {
+        window.voiceService.processSignalingMessage(message.sender, signalData);
+      } else {
+        console.warn('Voice service not available for processing signal');
+      }
+    } catch (error) {
+      console.warn('Error processing WebRTC signal:', error);
+    }
+  }
 
   /**
    * Send a message in a conversation
@@ -418,7 +395,7 @@ _processWebRTCSignal(message) {
         try {
           // Process any call signals in this message immediately
           this._processMessage(message);
-          
+
           // Check if this is a file metadata message
           if (typeof message.content === 'string') {
             try {
@@ -616,7 +593,7 @@ _processWebRTCSignal(message) {
     else if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
     else return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
   }
-  
+
   // Helper method to convert file to base64
   async convertFileToBase64(file) {
     return new Promise((resolve, reject) => {
@@ -749,7 +726,7 @@ _processWebRTCSignal(message) {
       // Don't throw, just continue execution
     }
   }
-  
+
   /**
    * Delete message history and conversation
    * @param {string} contactPublicKey - Contact's public key
@@ -760,7 +737,7 @@ _processWebRTCSignal(message) {
       // Filter out the conversation
       const originalLength = this.conversations.length
       this.conversations = this.conversations.filter(c => c.contactPublicKey !== contactPublicKey)
-      
+
       // Check if a conversation was removed
       if (this.conversations.length < originalLength) {
         this._persistConversations()

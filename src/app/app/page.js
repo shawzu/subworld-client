@@ -79,8 +79,8 @@ export default function App() {
     setupServices();
   }, []);
 
-  const joinCall = async (callId) => {
-    console.log('Joining call with ID:', callId);
+  const joinCall = async (callId, contactPublicKey) => {
+    console.log('Joining call with ID:', callId, 'and contact:', contactPublicKey);
 
     try {
       // Check if voice service is available
@@ -96,8 +96,8 @@ export default function App() {
         await window.voiceService.initialize();
       }
       
-      // Join the call
-      await window.voiceService.joinCall(callId);
+      // Join the call with both call ID and contact public key
+      await window.voiceService.joinCall(callId, contactPublicKey);
       return true;
     } catch (error) {
       console.error('Failed to join call:', error);
@@ -111,13 +111,18 @@ export default function App() {
   const handleInitiateCall = (contactPublicKey) => {
     console.log('Initiating call to:', contactPublicKey);
 
-    if (!window.voiceService) {
+    if (typeof window === 'undefined' || !window.voiceService) {
       console.error('Voice service not available');
       alert('Voice service not available. Please try again later.');
       return;
     }
 
     try {
+      // First, ensure we have a conversation with this contact
+      if (conversationManager) {
+        conversationManager.createOrUpdateConversation(contactPublicKey);
+      }
+
       // Ensure the voice service is initialized
       if (!window.voiceService.initialized) {
         console.log('Voice service not yet initialized, initializing now...');
