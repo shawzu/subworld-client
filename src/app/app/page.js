@@ -52,9 +52,10 @@ export default function App() {
 
   if (typeof window !== 'undefined') {
     import('../../utils/CallService').then(module => {
+      // Store the call service globally
       window.callService = module.default;
       console.log('Call service loaded globally');
-
+  
       // Initialize call service
       window.callService.initialize().catch(err => {
         console.warn('Failed to initialize call service:', err);
@@ -68,32 +69,62 @@ export default function App() {
     // Share services with each other
     const setupServices = () => {
       if (typeof window !== 'undefined') {
+        // Make conversationManager globally available
+        if (conversationManager && !window.conversationManager) {
+          window.conversationManager = conversationManager;
+          console.log("Conversation manager registered globally");
+        }
+        
         // Wait until both services are loaded
         if (window.callService && window.conversationManager) {
-          // Tell call service about conversation manager
+          // Connect the services in both directions
           window.callService.conversationManager = window.conversationManager;
-          console.log("Connected call service with conversation manager");
+          window.conversationManager.callService = window.callService;
+          console.log("Connected call service with conversation manager (bidirectional)");
         } else {
           // Try again in a moment
-          setTimeout(setupServices, 500);
+          setTimeout(setupServices, 1000);
         }
       }
     };
     
+    // Start the service connection process
     setupServices();
   }, []);
+  
 
   // Add this function to your component
   const handleInitiateCall = (contactPublicKey) => {
+    console.log('Initiating call to:', contactPublicKey);
+    
     if (!window.callService) {
-      alert('Call service not available');
+      console.error('Call service not available');
+      alert('Call service not available. Please try again later.');
       return;
     }
-
-    window.callService.initiateCall(contactPublicKey).catch(error => {
-      console.error('Failed to initiate call:', error);
-      alert('Could not start the call. Please try again.');
-    });
+  
+    try {
+      // Ensure the call service is initialized
+      if (!window.callService.isInitialized) {
+        console.log('Call service not yet initialized, initializing now...');
+        window.callService.initialize().then(() => {
+          // After initialization, try to initiate the call
+          window.callService.initiateCall(contactPublicKey).catch(error => {
+            console.error('Failed to initiate call:', error);
+            alert('Could not start the call. Please try again.');
+          });
+        });
+      } else {
+        // Call service is already initialized, proceed with call
+        window.callService.initiateCall(contactPublicKey).catch(error => {
+          console.error('Failed to initiate call:', error);
+          alert('Could not start the call. Please try again.');
+        });
+      }
+    } catch (error) {
+      console.error('Error in handleInitiateCall:', error);
+      alert('An error occurred while trying to start the call. Please try again.');
+    }
   };
 
   // Initialize app data

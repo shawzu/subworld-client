@@ -17,7 +17,7 @@ class WebRTCService {
     this.onIceCandidate = null;
     this.onRemoteStream = null;
     this.onConnectionStateChange = null;
-    
+
     // ICE servers for NAT traversal
     this.iceServers = {
       iceServers: [
@@ -51,21 +51,21 @@ class WebRTCService {
     try {
       this.currentCallPartner = partnerKey;
       this.isInitiator = true;
-      
+
       // Create a new RTCPeerConnection
       await this._createPeerConnection();
-      
+
       // Get local audio stream
       await this._getLocalStream();
-      
+
       // Create and set local description (offer)
       const offer = await this.peerConnection.createOffer({
         offerToReceiveAudio: true,
         offerToReceiveVideo: false
       });
-      
+
       await this.peerConnection.setLocalDescription(offer);
-      
+
       return offer;
     } catch (error) {
       console.error('Error starting call:', error);
@@ -80,27 +80,81 @@ class WebRTCService {
    * @param {RTCSessionDescription} remoteDescription Remote session description
    * @returns {Promise<RTCSessionDescription>} Local session description
    */
+  /**
+ * Accept an incoming call
+ * @param {string} partnerKey Partner's public key
+ * @param {RTCSessionDescription|Object|string} remoteDescription Remote session description
+ * @returns {Promise<RTCSessionDescription>} Local session description
+ */
   async acceptCall(partnerKey, remoteDescription) {
     try {
+      console.log('Accepting call from:', partnerKey);
       this.currentCallPartner = partnerKey;
       this.isInitiator = false;
-      
+
       // Create a new RTCPeerConnection
       await this._createPeerConnection();
-      
-      // Set remote description
-      await this.peerConnection.setRemoteDescription(
-        new RTCSessionDescription(remoteDescription)
-      );
-      
+
+      // Make sure remoteDescription is in the right format
+      let sessionDesc;
+
+      // Handle different input formats
+      if (typeof remoteDescription === 'string') {
+        // If it's a string, try to parse it as JSON
+        try {
+          const parsed = JSON.parse(remoteDescription);
+          sessionDesc = new RTCSessionDescription(parsed);
+        } catch (error) {
+          console.error('Failed to parse remote description string:', error);
+          throw new Error('Invalid remote description format (string parsing failed)');
+        }
+      } else if (remoteDescription instanceof RTCSessionDescription) {
+        // If it's already an RTCSessionDescription, use it directly
+        sessionDesc = remoteDescription;
+      } else if (typeof remoteDescription === 'object' && remoteDescription !== null) {
+        // If it's an object with type and sdp, create a new RTCSessionDescription
+        if (!remoteDescription.type || !remoteDescription.sdp) {
+          console.error('Remote description missing type or sdp:', remoteDescription);
+          throw new Error('Invalid remote description: missing type or sdp');
+        }
+
+        try {
+          sessionDesc = new RTCSessionDescription({
+            type: remoteDescription.type,
+            sdp: remoteDescription.sdp
+          });
+        } catch (error) {
+          console.error('Failed to create RTCSessionDescription from object:', error);
+          throw new Error('Invalid remote description format (object conversion failed)');
+        }
+      } else {
+        console.error('Unsupported remote description format:', typeof remoteDescription);
+        throw new Error('Unsupported remote description format');
+      }
+
+      console.log('Setting remote description with type:', sessionDesc.type);
+
+      // Set remote description with proper error handling
+      try {
+        await this.peerConnection.setRemoteDescription(sessionDesc);
+      } catch (error) {
+        console.error('Error setting remote description:', error);
+        throw new Error(`Failed to set remote description: ${error.message}`);
+      }
+
       // Get local audio stream
       await this._getLocalStream();
-      
+
       // Create and set local description (answer)
-      const answer = await this.peerConnection.createAnswer();
-      await this.peerConnection.setLocalDescription(answer);
-      
-      return answer;
+      try {
+        const answer = await this.peerConnection.createAnswer();
+        await this.peerConnection.setLocalDescription(answer);
+        console.log('Created and set local answer with type:', answer.type);
+        return answer;
+      } catch (error) {
+        console.error('Error creating/setting local answer:', error);
+        throw new Error(`Failed to create/set answer: ${error.message}`);
+      }
     } catch (error) {
       console.error('Error accepting call:', error);
       this._cleanup();
@@ -112,34 +166,118 @@ class WebRTCService {
    * Process an answer from the remote peer
    * @param {RTCSessionDescription} remoteDescription Remote session description
    */
-  async processAnswer(remoteDescription) {
-    try {
-      if (!this.peerConnection) {
-        throw new Error('No active peer connection');
+  /**
+ * Process an answer from the remote peer
+ * @param {RTCSessionDescription|Object|string} remoteDescription Remote session description
+ */
+async processAnswer(remoteDescription) {
+  try {
+    console.log('Processing remote answer:', typeof remoteDescription);
+    
+    if (!this.peerConnection) {
+      console.error('No active peer connection when processing answer');
+      throw new Error('No active peer connection');
+    }
+    
+    // Convert the remote description to the right format
+    let sessionDesc;
+    
+    // Handle different input formats
+    if (typeof remoteDescription === 'string') {
+      // If it's a string, try to parse it as JSON
+      try {
+        const parsed = JSON.parse(remoteDescription);
+        sessionDesc = new RTCSessionDescription(parsed);
+        console.log('Created RTCSessionDescription from parsed string');
+      } catch (error) {
+        console.error('Failed to parse remote description string:', error);
+        throw new Error('Invalid remote description format (string parsing failed)');
+      }
+    } else if (remoteDescription instanceof RTCSessionDescription) {
+      // If it's already an RTCSessionDescription, use it directly
+      sessionDesc = remoteDescription;
+      console.log('Using provided RTCSessionDescription directly');
+    } else if (typeof remoteDescription === 'object' && remoteDescription !== null) {
+      // If it's an object with type and sdp, create a new RTCSessionDescription
+      if (!remoteDescription.type || !remoteDescription.sdp) {
+        console.error('Remote description missing type or sdp:', remoteDescription);
+        throw new Error('Invalid remote description: missing type or sdp');
       }
       
-      await this.peerConnection.setRemoteDescription(
-        new RTCSessionDescription(remoteDescription)
-      );
+      try {
+        sessionDesc = new RTCSessionDescription({
+          type: remoteDescription.type,
+          sdp: remoteDescription.sdp
+        });
+        console.log('Created RTCSessionDescription from object');
+      } catch (error) {
+        console.error('Failed to create RTCSessionDescription from object:', error);
+        throw new Error('Invalid remote description format (object conversion failed)');
+      }
+    } else {
+      console.error('Unsupported remote description format:', typeof remoteDescription);
+      throw new Error('Unsupported remote description format');
+    }
+    
+    // Check if we have a remote description already
+    const currentRemoteDesc = this.peerConnection.currentRemoteDescription;
+    if (currentRemoteDesc) {
+      console.warn('Remote description already set, may be overwriting. Current type:', 
+        currentRemoteDesc.type, 'New type:', sessionDesc.type);
+    }
+    
+    // Set the remote description
+    try {
+      console.log('Setting remote description of type:', sessionDesc.type);
+      await this.peerConnection.setRemoteDescription(sessionDesc);
+      console.log('Remote description set successfully');
     } catch (error) {
-      console.error('Error processing answer:', error);
+      console.error('Error setting remote description:', error);
       throw error;
     }
+    
+    return true;
+  } catch (error) {
+    console.error('Error processing answer:', error);
+    throw error;
   }
-
+}
   /**
    * Add an ICE candidate from the remote peer
    * @param {RTCIceCandidate} candidate ICE candidate
    */
   async addIceCandidate(candidate) {
     try {
+      console.log('Adding ICE candidate');
+
       if (!this.peerConnection) {
         throw new Error('No active peer connection');
       }
-      
-      await this.peerConnection.addIceCandidate(
-        new RTCIceCandidate(candidate)
-      );
+
+      // Parse candidate if it's a string
+      let iceCandidate;
+      if (typeof candidate === 'string') {
+        try {
+          const parsed = JSON.parse(candidate);
+          iceCandidate = new RTCIceCandidate(parsed);
+        } catch (parseError) {
+          console.error('Error parsing ICE candidate:', parseError);
+          throw new Error('Invalid ICE candidate format');
+        }
+      } else {
+        iceCandidate = new RTCIceCandidate(candidate);
+      }
+
+      // Wait for remote description before adding candidates
+      if (!this.peerConnection.remoteDescription) {
+        console.warn('Remote description not set yet, cannot add ICE candidate');
+        throw new Error('Cannot add ICE candidate, remote description not set');
+      }
+
+      await this.peerConnection.addIceCandidate(iceCandidate);
+      console.log('ICE candidate added successfully');
+
+      return true;
     } catch (error) {
       console.error('Error adding ICE candidate:', error);
       throw error;
@@ -154,14 +292,14 @@ class WebRTCService {
     if (!this.localStream) {
       return this.isMuted;
     }
-    
+
     this.isMuted = !this.isMuted;
-    
+
     // Update all audio tracks
     this.localStream.getAudioTracks().forEach(track => {
       track.enabled = !this.isMuted;
     });
-    
+
     return this.isMuted;
   }
 
@@ -180,25 +318,50 @@ class WebRTCService {
   async _getLocalStream() {
     try {
       if (!this.localStream) {
-        // Request microphone access
-        this.localStream = await navigator.mediaDevices.getUserMedia({ 
-          audio: true, 
-          video: false 
-        });
+        console.log('Requesting microphone access...');
+        try {
+          // Request microphone access with explicit error handling
+          this.localStream = await navigator.mediaDevices.getUserMedia({
+            audio: true,
+            video: false
+          });
+          console.log('Microphone access granted');
+        } catch (mediaError) {
+          console.error('Microphone access failed:', mediaError);
+
+          // Try to get a more helpful error message
+          let errorMessage = 'Could not access microphone';
+          if (mediaError.name === 'NotAllowedError') {
+            errorMessage = 'Microphone access denied by user or already in use';
+          } else if (mediaError.name === 'NotFoundError') {
+            errorMessage = 'No microphone found on this device';
+          } else if (mediaError.name === 'NotReadableError') {
+            errorMessage = 'Microphone is already in use by another application';
+          }
+
+          // Re-throw with better error
+          throw new Error(errorMessage);
+        }
       }
-      
+
       // Add tracks to peer connection
-      this.localStream.getAudioTracks().forEach(track => {
-        this.peerConnection.addTrack(track, this.localStream);
-      });
-      
+      if (this.peerConnection && this.localStream) {
+        const audioTracks = this.localStream.getAudioTracks();
+        console.log(`Adding ${audioTracks.length} audio tracks to peer connection`);
+
+        audioTracks.forEach(track => {
+          this.peerConnection.addTrack(track, this.localStream);
+        });
+      } else {
+        console.warn('Cannot add tracks: peer connection or local stream not available');
+      }
+
       return this.localStream;
     } catch (error) {
       console.error('Error getting local stream:', error);
       throw error;
     }
   }
-
   /**
    * Create a new RTCPeerConnection
    * @private
@@ -207,46 +370,74 @@ class WebRTCService {
     try {
       // Close any existing connection
       if (this.peerConnection) {
+        console.log('Closing existing peer connection before creating new one');
         this._cleanup();
       }
-      
+
+      console.log('Creating new RTCPeerConnection with ICE servers:', this.iceServers);
+
       // Create new connection
       this.peerConnection = new RTCPeerConnection(this.iceServers);
-      
+
       // Set up event handlers
       this.peerConnection.onicecandidate = (event) => {
         if (event.candidate && this.onIceCandidate) {
+          console.log('ICE candidate generated:', event.candidate.candidate.substr(0, 50) + '...');
           this.onIceCandidate(event.candidate);
         }
       };
-      
+
+      this.peerConnection.oniceconnectionstatechange = () => {
+        console.log('ICE connection state changed to:', this.peerConnection.iceConnectionState);
+      };
+
+      this.peerConnection.onicegatheringstatechange = () => {
+        console.log('ICE gathering state changed to:', this.peerConnection.iceGatheringState);
+      };
+
+      this.peerConnection.onsignalingstatechange = () => {
+        console.log('Signaling state changed to:', this.peerConnection.signalingState);
+      };
+
       this.peerConnection.ontrack = (event) => {
+        console.log('Remote track received:',
+          event.streams && event.streams.length ?
+            `${event.streams[0].getTracks().length} tracks` : 'No tracks');
+
         if (event.streams && event.streams[0] && this.onRemoteStream) {
           this.remoteStream = event.streams[0];
+          console.log('Remote stream received with audio tracks:',
+            this.remoteStream.getAudioTracks().length);
           this.onRemoteStream(this.remoteStream);
         }
       };
-      
+
       // Watch connection state
       this.peerConnection.onconnectionstatechange = () => {
+        console.log('Connection state changed to:', this.peerConnection.connectionState);
+
         if (this.onConnectionStateChange) {
           this.onConnectionStateChange(this.peerConnection.connectionState);
         }
-        
+
         // Auto cleanup on disconnection
         if (
           this.peerConnection.connectionState === 'disconnected' ||
           this.peerConnection.connectionState === 'failed' ||
           this.peerConnection.connectionState === 'closed'
         ) {
+          console.log('Connection state indicates call has ended, cleaning up');
           this._cleanup();
         }
       };
+
+      console.log('RTCPeerConnection created successfully');
     } catch (error) {
       console.error('Error creating peer connection:', error);
       throw error;
     }
   }
+
 
   /**
    * Clean up resources
@@ -258,20 +449,20 @@ class WebRTCService {
       this.localStream.getTracks().forEach(track => track.stop());
       this.localStream = null;
     }
-    
+
     // Close peer connection
     if (this.peerConnection) {
       this.peerConnection.close();
       this.peerConnection = null;
     }
-    
+
     // Reset state
     this.remoteStream = null;
     this.isInitiator = false;
     this.isMuted = false;
     this.currentCallPartner = null;
   }
-  
+
   /**
    * Check if the service is currently in a call
    * @returns {boolean} True if in a call
@@ -279,7 +470,7 @@ class WebRTCService {
   isInCall() {
     return !!this.peerConnection;
   }
-  
+
   /**
    * Get the current mute state
    * @returns {boolean} True if muted
@@ -287,7 +478,7 @@ class WebRTCService {
   getMuteState() {
     return this.isMuted;
   }
-  
+
   /**
    * Get the current call partner key
    * @returns {string|null} Partner's public key

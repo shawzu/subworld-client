@@ -16,6 +16,9 @@ class CallService {
         this.callListeners = [];
         this.isInitialized = false;
 
+        // Enable detailed debug logging for call service
+        this.debugMode = true;
+
         // Signaling message types
         this.SIGNAL_TYPES = {
             OFFER: 'call_offer',
@@ -24,40 +27,81 @@ class CallService {
             HANG_UP: 'call_hang_up',
             BUSY: 'call_busy'
         };
+
+        // Log initialization
+        console.log('Call service instance created');
     }
 
     /**
      * Initialize the call service
      */
     async initialize() {
-        if (this.isInitialized) return;
-        
-        try {
-          console.log("Initializing call service...");
-          
-          // Initialize WebRTC service
-          webRTCService.initialize(
-            this.handleIceCandidate.bind(this),
-            this.handleRemoteStream.bind(this),
-            this.handleConnectionStateChange.bind(this)
-          );
-          
-          // Check if we have access to the conversation manager through the window
-          if (typeof window !== 'undefined' && window.conversationManager) {
-            console.log("Found conversation manager for call signaling");
-          } else {
-            console.warn("ConversationManager not available for call signaling yet");
-            // We'll try to use it later when needed
-          }
-          
-          this.isInitialized = true;
-          console.log('Call service initialized successfully');
-          return true;
-        } catch (error) {
-          console.error('Failed to initialize call service:', error);
-          throw error;
+        if (this.isInitialized) {
+            console.log('Call service already initialized');
+            return true;
         }
-      }
+
+        try {
+            console.log("Initializing call service...");
+
+            // Initialize WebRTC service
+            webRTCService.initialize(
+                this.handleIceCandidate.bind(this),
+                this.handleRemoteStream.bind(this),
+                this.handleConnectionStateChange.bind(this)
+            );
+
+            // Make the call service globally available
+            if (typeof window !== 'undefined') {
+                window.callService = this;
+                console.log("Call service registered globally as window.callService");
+            }
+
+            // Try to find the conversation manager
+            if (typeof window !== 'undefined' && window.conversationManager) {
+                console.log("Found conversation manager during initialization");
+                this.conversationManager = window.conversationManager;
+
+                // Create a two-way connection
+                if (window.conversationManager && !window.conversationManager.callService) {
+                    window.conversationManager.callService = this;
+                    console.log("Set reference from conversation manager to call service");
+                }
+            } else {
+                console.log("Conversation manager not found yet, will connect when available");
+
+                // Set up a check to find the conversation manager later
+                if (typeof window !== 'undefined') {
+                    const checkForConversationManager = () => {
+                        if (window.conversationManager) {
+                            console.log("Found conversation manager in delayed check");
+                            this.conversationManager = window.conversationManager;
+
+                            // Register back-reference
+                            if (!window.conversationManager.callService) {
+                                window.conversationManager.callService = this;
+                                console.log("Set delayed reference from conversation manager to call service");
+                            }
+                        } else {
+                            console.log("Still waiting for conversation manager...");
+                            setTimeout(checkForConversationManager, 1000);
+                        }
+                    };
+
+                    // Start checking
+                    setTimeout(checkForConversationManager, 1000);
+                }
+            }
+
+            this.isInitialized = true;
+            console.log('Call service initialized successfully');
+            return true;
+        } catch (error) {
+            console.error('Failed to initialize call service:', error);
+            throw error;
+        }
+    }
+
 
     /**
      * Register a call event listener
@@ -142,6 +186,11 @@ class CallService {
      * @param {string} callerKey Caller's public key
      * @param {Object} offer WebRTC session description offer
      */
+    /**
+ * Handle an incoming call
+ * @param {string} callerKey Caller's public key
+ * @param {Object|string} offer WebRTC session description offer
+ */
     handleIncomingCall(callerKey, offer) {
         try {
             // Reject if already in a call
@@ -153,10 +202,27 @@ class CallService {
                 return;
             }
 
+            console.log('Handling incoming call from:', callerKey);
+            console.log('Offer type:', typeof offer);
+
+            // Make sure offer is properly formatted for storage
+            let processedOffer = offer;
+
+            // If it's a string, we need to parse it
+            if (typeof offer === 'string') {
+                try {
+                    processedOffer = JSON.parse(offer);
+                    console.log('Parsed offer from string:', typeof processedOffer);
+                } catch (err) {
+                    console.error('Error parsing offer string:', err);
+                    // Keep as string if parsing fails - WebRTCService will handle it
+                }
+            }
+
             // Save incoming call
             this.incomingCall = {
                 contactKey: callerKey,
-                offer: offer,
+                offer: processedOffer,
                 receivedTime: Date.now()
             };
 
@@ -177,11 +243,14 @@ class CallService {
             this.rejectCall();
         }
     }
-
     /**
      * Answer an incoming call
      * @returns {Promise<boolean>} True if call answered successfully
      */
+    /**
+ * Answer an incoming call
+ * @returns {Promise<boolean>} True if call answered successfully
+ */
     async answerCall() {
         try {
             if (!this.incomingCall) {
@@ -197,38 +266,81 @@ class CallService {
             }
 
             const { contactKey, offer } = this.incomingCall;
+            console.log('Answering call from:', contactKey);
+            console.log('Using offer:', typeof offer, offer ? 'with data' : 'missing!');
 
             // Create the answer
-            const answer = await webRTCService.acceptCall(contactKey, offer);
+            try {
+                const answer = await webRTCService.acceptCall(contactKey, offer);
+                console.log('Call accepted with answer:', answer ? 'received' : 'missing');
 
-            // Update call state
-            this.activeCall = {
-                contactKey: contactKey,
-                state: 'connected',
-                startTime: Date.now()
-            };
-            this.incomingCall = null;
+                // Validate that the answer is in proper format before sending
+                if (!answer || (!answer.type && !answer.sdp && typeof answer !== 'object')) {
+                    console.error('Invalid answer format:', answer);
+                    throw new Error('Failed to create valid answer');
+                }
 
-            // Notify listeners
-            this._notifyListeners('call_state_changed', { state: 'connected', contact: contactKey });
+                // For debug - log the answer details
+                console.log('Answer details:',
+                    answer.type,
+                    answer.sdp ? 'has sdp' : 'no sdp',
+                    typeof answer.toJSON === 'function' ? 'has toJSON method' : 'no toJSON method'
+                );
 
-            // Send the answer
-            const signalMessage = {
-                type: this.SIGNAL_TYPES.ANSWER,
-                payload: JSON.stringify(answer)
-            };
+                // Update call state
+                this.activeCall = {
+                    contactKey: contactKey,
+                    state: 'connected',
+                    startTime: Date.now()
+                };
+                this.incomingCall = null;
 
-            await this._sendSignalingMessage(contactKey, signalMessage);
-            console.log('Call answer sent to:', contactKey);
+                // Notify listeners
+                this._notifyListeners('call_state_changed', { state: 'connected', contact: contactKey });
 
-            return true;
+                // Convert to plain object if needed
+                let answerForSignal;
+                if (typeof answer.toJSON === 'function') {
+                    answerForSignal = answer.toJSON();
+                    console.log('Converted answer to JSON for signaling');
+                } else {
+                    answerForSignal = {
+                        type: answer.type,
+                        sdp: answer.sdp
+                    };
+                    console.log('Created answer object for signaling');
+                }
+
+                // Send the answer signal
+                const signalMessage = {
+                    type: this.SIGNAL_TYPES.ANSWER,
+                    payload: JSON.stringify(answerForSignal)
+                };
+
+                // Log the signal we're about to send
+                console.log('Sending answer signal to:', contactKey);
+                console.log('Signal type:', signalMessage.type);
+                console.log('Payload is stringified:', typeof signalMessage.payload === 'string');
+
+                const sent = await this._sendSignalingMessage(contactKey, signalMessage);
+                if (sent) {
+                    console.log('Call answer sent successfully to:', contactKey);
+                } else {
+                    console.error('Failed to send call answer to:', contactKey);
+                    throw new Error('Failed to send answer signal');
+                }
+
+                return true;
+            } catch (error) {
+                console.error('Failed to create or send answer:', error);
+                throw error;
+            }
         } catch (error) {
             console.error('Failed to answer call:', error);
             this.endCall();
             return false;
         }
     }
-
     /**
      * Reject an incoming call
      * @returns {Promise<boolean>} True if call rejected successfully
@@ -398,14 +510,22 @@ class CallService {
         try {
             console.log('WebRTC connection state changed:', state);
 
-            // If we're in a call, notify listeners
-            if (this.activeCall) {
-                this._notifyListeners('connection_state_changed', { state });
+            // Notify listeners
+            this._notifyListeners('connection_state_changed', { state });
 
-                // Auto end call on disconnection
-                if (state === 'disconnected' || state === 'failed' || state === 'closed') {
-                    this.endCall();
-                }
+            // If connected, make sure the call state is updated
+            if (state === 'connected' && this.activeCall && this.activeCall.state !== 'connected') {
+                console.log('WebRTC connected, ensuring call state is updated');
+                this.activeCall.state = 'connected';
+                this._notifyListeners('call_state_changed', {
+                    state: 'connected',
+                    contact: this.activeCall.contactKey
+                });
+            }
+
+            // Auto end call on disconnection
+            if (state === 'disconnected' || state === 'failed' || state === 'closed') {
+                this.endCall();
             }
         } catch (error) {
             console.error('Error handling connection state change:', error);
@@ -413,56 +533,99 @@ class CallService {
     }
 
     /**
-     * Process a signaling message from another peer
-     * @param {string} senderKey Sender's public key
-     * @param {Object} message Signaling message
-     * @returns {Promise<boolean>} True if message processed successfully
-     */
+  * Process a signaling message from another peer
+  * @param {string} senderKey Sender's public key
+  * @param {Object} message Signaling message
+  * @returns {Promise<boolean>} True if message processed successfully
+  */
     async processSignalingMessage(senderKey, message) {
         try {
-            if (!message || !message.type || !this.SIGNAL_TYPES[message.type]) {
+            console.log(`Processing signal from ${senderKey}, type:`, message.type);
+
+            if (!message || !message.type) {
                 console.warn('Invalid signaling message:', message);
                 return false;
             }
 
-            console.log('Processing signaling message:', message.type, 'from:', senderKey);
+            // Make sure the type is one we recognize
+            if (!Object.values(this.SIGNAL_TYPES).includes(message.type)) {
+                console.warn('Unknown signal type:', message.type);
+                return false;
+            }
 
             switch (message.type) {
                 case this.SIGNAL_TYPES.OFFER:
-                    // Handle incoming call offer
-                    if (this.activeCall || this.incomingCall) {
-                        // Already in a call, send busy signal
-                        console.log("Already in a call, sending busy signal");
-                        await this._sendSignalingMessage(senderKey, {
-                            type: this.SIGNAL_TYPES.BUSY,
-                            payload: 'User is busy'
-                        });
-                        return true;
+                    console.log("Received call offer from:", senderKey);
+
+                    // Make sure the payload is properly formatted
+                    let offer = message.payload;
+                    if (typeof offer === 'string') {
+                        try {
+                            offer = JSON.parse(offer);
+                            console.log("Parsed offer payload from string");
+                        } catch (parseError) {
+                            console.error("Failed to parse offer payload:", parseError);
+                            // Continue with string format - handleIncomingCall will attempt to handle it
+                        }
                     }
 
-                    try {
-                        console.log("Processing incoming call offer");
-                        const offer = JSON.parse(message.payload);
-                        this.handleIncomingCall(senderKey, offer);
-                        return true;
-                    } catch (error) {
-                        console.error('Error parsing call offer:', error);
-                        return false;
+                    // Always log the offer format to help with debugging
+                    console.log("Offer format:", typeof offer);
+                    if (typeof offer === 'object') {
+                        console.log("Offer content:", offer.type, offer.sdp ? "has sdp" : "no sdp");
                     }
+
+                    this.handleIncomingCall(senderKey, offer);
+                    return true;
 
                 case this.SIGNAL_TYPES.ANSWER:
                     // Handle call answer
-                    if (!this.activeCall || this.activeCall.contactKey !== senderKey) {
-                        console.warn('Received answer from unexpected sender:', senderKey);
+                    console.log("Received call answer from:", senderKey);
+
+                    if (!this.activeCall) {
+                        console.warn('Received answer but no active call exists');
                         return false;
                     }
 
+                    if (this.activeCall.contactKey !== senderKey) {
+                        console.warn(`Received answer from ${senderKey} but active call is with ${this.activeCall.contactKey}`);
+                        return false;
+                    }
+
+                    console.log(`Processing answer for active call with ${this.activeCall.contactKey}`);
+
                     try {
-                        const answer = JSON.parse(message.payload);
-                        await webRTCService.processAnswer(answer);
+                        let answer = message.payload;
+                        console.log("Answer payload type:", typeof answer);
+
+                        if (typeof answer === 'string') {
+                            try {
+                                answer = JSON.parse(answer);
+                                console.log("Parsed answer payload from string, now type:", typeof answer);
+
+                                // Make sure we have valid SDP content
+                                if (typeof answer === 'object' && answer.type && answer.sdp) {
+                                    console.log(`Answer appears valid: type=${answer.type}, has sdp=${!!answer.sdp}`);
+                                } else {
+                                    console.warn("Parsed answer doesn't have expected structure:", answer);
+                                }
+
+                            } catch (parseError) {
+                                console.error("Failed to parse answer payload:", parseError);
+                                return false;
+                            }
+                        }
+
+                        // Process the answer with extra logging
+                        console.log("Calling webRTCService.processAnswer with:", typeof answer);
+                        const result = await webRTCService.processAnswer(answer);
+                        console.log("processAnswer result:", result);
 
                         // Update call state
+                        console.log(`Changing call state from ${this.activeCall.state} to connected`);
                         this.activeCall.state = 'connected';
+
+                        // Notify listeners about the state change
                         this._notifyListeners('call_state_changed', {
                             state: 'connected',
                             contact: senderKey
@@ -484,7 +647,16 @@ class CallService {
                     }
 
                     try {
-                        const candidate = JSON.parse(message.payload);
+                        let candidate = message.payload;
+                        if (typeof candidate === 'string') {
+                            try {
+                                candidate = JSON.parse(candidate);
+                            } catch (parseError) {
+                                console.error("Failed to parse ICE candidate:", parseError);
+                                return false;
+                            }
+                        }
+
                         await webRTCService.addIceCandidate(candidate);
                         return true;
                     } catch (error) {
@@ -522,49 +694,71 @@ class CallService {
     }
 
     /**
-     * Send a signaling message to another peer
-     * @param {string} recipientKey Recipient's public key
-     * @param {Object} message Signaling message
-     * @returns {Promise<boolean>} True if message sent successfully
-     * @private
-     */
+  * Send a signaling message to another peer
+  * @param {string} recipientKey Recipient's public key
+  * @param {Object} message Signaling message
+  * @returns {Promise<boolean>} True if message sent successfully
+  * @private
+  */
     async _sendSignalingMessage(recipientKey, message) {
         try {
-          // Check if we have access to the conversation manager
-          if (typeof window === 'undefined' || !window.conversationManager || 
-              typeof window.conversationManager.sendCallSignal !== 'function') {
-            
-            // Fallback: Try direct import if available
-            if (typeof conversationManager !== 'undefined' && 
-                typeof conversationManager.sendCallSignal === 'function') {
-              await conversationManager.sendCallSignal(recipientKey, message);
-              return true;
+            console.log(`Sending ${message.type} signal to ${recipientKey}`);
+
+            // Try conversation manager from different sources in order of preference
+            let conversationMgr = null;
+
+            // First try instance variable
+            if (this.conversationManager) {
+                console.log("Using instance conversationManager");
+                conversationMgr = this.conversationManager;
             }
-            
-            console.error('No valid conversation manager available for sending call signals');
-            console.log('Will try to send message using alternative method');
-            
-            // Fallback to direct message
-            if (typeof window !== 'undefined' && window.conversationManager && 
-                typeof window.conversationManager.sendMessage === 'function') {
-              
-              const callSignalPrefix = "CALL_SIGNAL:";
-              const signalMessage = `${callSignalPrefix}${JSON.stringify(message)}`;
-              await window.conversationManager.sendMessage(recipientKey, signalMessage);
-              return true;
+            // Then try window reference
+            else if (typeof window !== 'undefined' && window.conversationManager) {
+                console.log("Using window.conversationManager");
+                conversationMgr = window.conversationManager;
             }
-            
-            return false;
-          }
-          
-          // Send call signal
-          await window.conversationManager.sendCallSignal(recipientKey, message);
-          return true;
+            // Then try direct import
+            else if (typeof conversationManager !== 'undefined') {
+                console.log("Using imported conversationManager");
+                conversationMgr = conversationManager;
+            }
+
+            if (!conversationMgr) {
+                console.error('No conversation manager available for sending call signals');
+                return false;
+            }
+
+            // Determine the call signal prefix
+            const callSignalPrefix = conversationMgr.callSignalPrefix || "CALL_SIGNAL:";
+
+            // Ensure the payload is a string
+            let payloadToSend = message.payload;
+            if (typeof payloadToSend !== 'string' && payloadToSend !== undefined) {
+                try {
+                    payloadToSend = JSON.stringify(payloadToSend);
+                } catch (err) {
+                    console.error('Failed to stringify payload:', err);
+                    return false;
+                }
+            }
+
+            // Create the complete signaling message
+            const signalMessage = `${callSignalPrefix}${JSON.stringify({
+                type: message.type,
+                payload: payloadToSend
+            })}`;
+
+            // Send using conversation manager
+            console.log(`Sending signal of type ${message.type} to ${recipientKey}`);
+            await conversationMgr.sendMessage(recipientKey, signalMessage);
+
+            console.log(`${message.type} signal sent successfully to ${recipientKey}`);
+            return true;
         } catch (error) {
-          console.error('Failed to send signaling message:', error);
-          return false;
+            console.error('Failed to send signaling message:', error);
+            return false;
         }
-      }
+    }
 
     /**
      * Play the ringtone for incoming calls

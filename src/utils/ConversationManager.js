@@ -19,6 +19,9 @@ class ConversationManager {
 
     this.callSignalPrefix = "CALL_SIGNAL:";
     this.isProcessingCallMessages = false;
+    
+    // Reference to call service (will be set later)
+    this.callService = null;
   }
 
   /**
@@ -61,6 +64,12 @@ class ConversationManager {
 
       // Auto-fetching disabled
       console.log('Auto-fetching disabled to reduce server load');
+      
+      // Make self available globally for other services
+      if (typeof window !== 'undefined') {
+        window.conversationManager = this;
+        console.log('Conversation manager registered globally');
+      }
 
       return true;
     } catch (error) {
@@ -139,6 +148,11 @@ class ConversationManager {
     return conversation
   }
 
+  /**
+   * Process call signals from messages
+   * @param {Array} messages - Array of messages to check for call signals
+   * @private
+   */
   _processCallSignals(messages) {
     // Skip if call service not available or already processing
     if (typeof window === 'undefined' || !window.callService || this.isProcessingCallMessages) {
@@ -155,12 +169,22 @@ class ConversationManager {
         
         // Check if this is a call signaling message
         if (typeof message.content === 'string' && message.content.startsWith(this.callSignalPrefix)) {
+          console.log('Found call signal message:', message.id);
+          
           // Extract the signaling data
           try {
-            const signalData = JSON.parse(message.content.substring(this.callSignalPrefix.length));
+            const signalString = message.content.substring(this.callSignalPrefix.length);
+            const signalData = JSON.parse(signalString);
+            
+            // Log the signal type for debugging
+            console.log('Processing call signal type:', signalData.type);
             
             // Process the signaling message
-            window.callService.processSignalingMessage(message.sender, signalData);
+            if (window.callService && typeof window.callService.processSignalingMessage === 'function') {
+              window.callService.processSignalingMessage(message.sender, signalData);
+            } else {
+              console.warn('Call service not available for processing signal');
+            }
           } catch (err) {
             console.warn('Error parsing call signal:', err);
           }
@@ -173,12 +197,55 @@ class ConversationManager {
     }
   }
   
-  // Add this method to the class
+  /**
+   * Process a new message and handle any special message types (like call signals)
+   * @param {Object} message - The message to process
+   * @private
+   */
+  _processMessage(message) {
+    // Skip processing our own messages
+    if (message.sender === this.currentUserKey) return;
+    
+    try {
+      // Check if this is a call signaling message
+      if (typeof message.content === 'string' && message.content.startsWith(this.callSignalPrefix)) {
+        console.log('Processing incoming call signal message:', message.id);
+        
+        // Extract the signaling data
+        try {
+          const signalString = message.content.substring(this.callSignalPrefix.length);
+          const signalData = JSON.parse(signalString);
+          
+          console.log('Call signal type:', signalData.type);
+          
+          // Process the signal
+          if (typeof window !== 'undefined' && window.callService) {
+            window.callService.processSignalingMessage(message.sender, signalData);
+          } else if (this.callService) {
+            this.callService.processSignalingMessage(message.sender, signalData);
+          } else {
+            console.warn('Call service not available for real-time signal processing');
+          }
+        } catch (err) {
+          console.warn('Error parsing call signal in message processor:', err);
+        }
+      }
+    } catch (error) {
+      console.error('Error in message processor:', error);
+    }
+  }
+  
+  /**
+   * Add this method to the class to send call signals
+   * @param {string} recipientKey - Recipient's public key
+   * @param {Object} signalData - Call signal data
+   * @returns {Promise<boolean>} - Success status
+   */
   async sendCallSignal(recipientKey, signalData) {
     try {
       console.log("Sending call signal:", signalData.type);
       // Add prefix to identify as call signal
-      const signalMessage = `CALL_SIGNAL:${JSON.stringify(signalData)}`;
+      const signalMessage = `${this.callSignalPrefix}${JSON.stringify(signalData)}`;
       
       // Send using regular message channel
       await this.sendMessage(recipientKey, signalMessage);
@@ -214,8 +281,6 @@ class ConversationManager {
         status: 'sent'
       }
 
-
-
       // Add to conversation
       conversation.messages.push(message)
       conversation.lastMessageTime = message.timestamp
@@ -234,14 +299,14 @@ class ConversationManager {
   }
 
   /**
-  * Fetch new messages from the network
-  * @returns {Promise<number>} - Number of new messages
-  */
+   * Fetch new messages from the network
+   * @returns {Promise<number>} - Number of new messages
+   */
   async fetchNewMessages() {
     try {
-      // Rate limiting - only fetch messages every 30 seconds at most
+      // Rate limiting - only fetch every 30 seconds at most
       const now = Date.now();
-      if (now - this._lastFetchTime < 30000) {
+      if (now - this._lastFetchTime < 30000) { // 30 seconds
         console.log('Skipping message fetch - fetched recently');
         return 0;
       }
@@ -301,6 +366,9 @@ class ConversationManager {
         }
 
         try {
+          // Process any call signals in this message immediately
+          this._processMessage(message);
+          
           // Check if this is a file metadata message
           if (typeof message.content === 'string') {
             try {
@@ -413,14 +481,12 @@ class ConversationManager {
     }
   }
 
-
-
   /**
- * Send a file in a conversation through the network
- * @param {string} contactPublicKey - Recipient's public key
- * @param {File} file - The file to send
- * @returns {Promise<Object>} - The sent message
- */
+   * Send a file in a conversation through the network
+   * @param {string} contactPublicKey - Recipient's public key
+   * @param {File} file - The file to send
+   * @returns {Promise<Object>} - The sent message
+   */
   async sendFile(contactPublicKey, file) {
     try {
       // Ensure conversation exists
@@ -500,6 +566,7 @@ class ConversationManager {
     else if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
     else return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
   }
+  
   // Helper method to convert file to base64
   async convertFileToBase64(file) {
     return new Promise((resolve, reject) => {
@@ -509,9 +576,6 @@ class ConversationManager {
       reader.readAsDataURL(file);
     });
   }
-
-
-
 
   /**
    * Mark conversation as read
@@ -524,7 +588,6 @@ class ConversationManager {
       this._persistConversations()
     }
   }
-
 
   /**
    * Get conversation preview data (for conversation list)
@@ -570,9 +633,9 @@ class ConversationManager {
   }
 
   /**
-  * Sort conversations by last message time
-  * @private
-  */
+   * Sort conversations by last message time
+   * @private
+   */
   _sortConversationsByTime() {
     try {
       // Make sure conversations is an array
@@ -611,9 +674,9 @@ class ConversationManager {
   }
 
   /**
- * Persist conversations to localStorage
- * @private
- */
+   * Persist conversations to localStorage
+   * @private
+   */
   _persistConversations() {
     try {
       // Make sure conversations is an array
@@ -636,6 +699,7 @@ class ConversationManager {
       // Don't throw, just continue execution
     }
   }
+  
   /**
    * Delete message history and conversation
    * @param {string} contactPublicKey - Contact's public key

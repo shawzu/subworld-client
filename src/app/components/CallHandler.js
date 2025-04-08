@@ -26,10 +26,13 @@ const CallHandler = () => {
       console.error('Failed to initialize call service:', error)
     })
     
-    // Set up call event listener
+    // Set up call event listener with enhanced state handling
     const removeListener = callService.addCallListener((event, data) => {
+      console.log('CallHandler received event:', event, data);
+      
       switch (event) {
         case 'call_state_changed':
+          console.log('Call state changed to:', data.state);
           setCallState(data.state)
           setContactKey(data.contact)
           
@@ -54,6 +57,7 @@ const CallHandler = () => {
           break
           
         case 'remote_stream_received':
+          console.log('Remote stream received, applying to audio element');
           if (remoteAudioRef.current && data.stream) {
             remoteAudioRef.current.srcObject = data.stream
             // Ensure it plays with autoplay issues on some browsers
@@ -65,7 +69,17 @@ const CallHandler = () => {
           
         case 'call_rejected':
           // Handle rejected calls
+          console.log('Call rejected, reason:', data.reason);
           break
+        
+        case 'connection_state_changed':
+          console.log('WebRTC connection state changed:', data.state);
+          // If connected, make sure UI shows connected state
+          if (data.state === 'connected' && callState !== 'connected') {
+            console.log('WebRTC reports connected, updating UI state');
+            setCallState('connected');
+          }
+          break;
       }
     })
     
