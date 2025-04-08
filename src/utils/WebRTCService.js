@@ -388,8 +388,18 @@ async processAnswer(remoteDescription) {
       };
 
       this.peerConnection.oniceconnectionstatechange = () => {
-        console.log('ICE connection state changed to:', this.peerConnection.iceConnectionState);
-      };
+        const iceState = this.peerConnection.iceConnectionState;
+        console.log('ICE connection state changed to:', iceState);
+        
+        // If ICE connection is established or completed, consider the call connected
+        if (iceState === 'connected' || iceState === 'completed') {
+            console.log('🟢 ICE CONNECTION ESTABLISHED 🟢');
+            if (this.onConnectionStateChange) {
+                // Force a "connected" state notification
+                this.onConnectionStateChange('connected');
+            }
+        }
+    };
 
       this.peerConnection.onicegatheringstatechange = () => {
         console.log('ICE gathering state changed to:', this.peerConnection.iceGatheringState);
@@ -414,22 +424,29 @@ async processAnswer(remoteDescription) {
 
       // Watch connection state
       this.peerConnection.onconnectionstatechange = () => {
-        console.log('Connection state changed to:', this.peerConnection.connectionState);
-
-        if (this.onConnectionStateChange) {
-          this.onConnectionStateChange(this.peerConnection.connectionState);
+        const connectionState = this.peerConnection.connectionState;
+        console.log('Connection state changed to:', connectionState);
+    
+        // Enhanced logging
+        if (connectionState === 'connected') {
+            console.log('🟢 WEBRTC CONNECTION ESTABLISHED 🟢');
         }
-
+    
+        if (this.onConnectionStateChange) {
+            // Always call the callback regardless of state
+            this.onConnectionStateChange(connectionState);
+        }
+    
         // Auto cleanup on disconnection
         if (
-          this.peerConnection.connectionState === 'disconnected' ||
-          this.peerConnection.connectionState === 'failed' ||
-          this.peerConnection.connectionState === 'closed'
+            connectionState === 'disconnected' ||
+            connectionState === 'failed' ||
+            connectionState === 'closed'
         ) {
-          console.log('Connection state indicates call has ended, cleaning up');
-          this._cleanup();
+            console.log('Connection state indicates call has ended, cleaning up');
+            this._cleanup();
         }
-      };
+    };
 
       console.log('RTCPeerConnection created successfully');
     } catch (error) {

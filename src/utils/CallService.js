@@ -93,6 +93,22 @@ class CallService {
                 }
             }
 
+            // Set up periodic state check to catch and fix any state inconsistencies
+            if (typeof window !== 'undefined') {
+                // Check every 2 seconds if the call state matches the WebRTC state
+                this.stateCheckInterval = setInterval(() => {
+                    if (this.activeCall && this.activeCall.state === 'outgoing') {
+                        // If call has been in outgoing state for more than 10 seconds
+                        // and WebRTC shows it's connected, force a state update
+                        const callDuration = Date.now() - this.activeCall.startTime;
+                        if (callDuration > 10000) { // 10 seconds
+                            this.forceStateSync();
+                        }
+                    }
+                }, 2000);
+            }
+
+
             this.isInitialized = true;
             console.log('Call service initialized successfully');
             return true;
@@ -388,6 +404,12 @@ class CallService {
      */
     async endCall() {
         try {
+
+            if (this.stateCheckInterval) {
+                clearInterval(this.stateCheckInterval);
+                this.stateCheckInterval = null;
+            }
+            
             // Get contact key before cleaning up
             const contactKey = this.activeCall?.contactKey;
 
@@ -502,10 +524,10 @@ class CallService {
     }
 
     /**
-     * Handle WebRTC connection state changes
-     * @param {string} state Connection state
-     * @private
-     */
+ * Handle WebRTC connection state changes
+ * @param {string} state Connection state
+ * @private
+ */
     handleConnectionStateChange(state) {
         try {
             console.log('WebRTC connection state changed:', state);
@@ -514,13 +536,19 @@ class CallService {
             this._notifyListeners('connection_state_changed', { state });
 
             // If connected, make sure the call state is updated
-            if (state === 'connected' && this.activeCall && this.activeCall.state !== 'connected') {
+            if (state === 'connected' && this.activeCall) {
                 console.log('WebRTC connected, ensuring call state is updated');
-                this.activeCall.state = 'connected';
-                this._notifyListeners('call_state_changed', {
-                    state: 'connected',
-                    contact: this.activeCall.contactKey
-                });
+
+                // Force state update for both outgoing and connected calls
+                const currentState = this.activeCall.state;
+                if (currentState === 'outgoing' || currentState === 'connecting') {
+                    console.log(`Forcing state change from ${currentState} to connected`);
+                    this.activeCall.state = 'connected';
+                    this._notifyListeners('call_state_changed', {
+                        state: 'connected',
+                        contact: this.activeCall.contactKey
+                    });
+                }
             }
 
             // Auto end call on disconnection
@@ -531,13 +559,12 @@ class CallService {
             console.error('Error handling connection state change:', error);
         }
     }
-
     /**
-  * Process a signaling message from another peer
-  * @param {string} senderKey Sender's public key
-  * @param {Object} message Signaling message
-  * @returns {Promise<boolean>} True if message processed successfully
-  */
+    * Process a signaling message from another peer
+    * @param {string} senderKey Sender's public key
+    * @param {Object} message Signaling message
+    * @returns {Promise<boolean>} True if message processed successfully
+    */
     async processSignalingMessage(senderKey, message) {
         try {
             console.log(`Processing signal from ${senderKey}, type:`, message.type);
@@ -621,11 +648,15 @@ class CallService {
                         const result = await webRTCService.processAnswer(answer);
                         console.log("processAnswer result:", result);
 
-                        // Update call state
-                        console.log(`Changing call state from ${this.activeCall.state} to connected`);
-                        this.activeCall.state = 'connected';
+                        // FIX: Update call state BEFORE notifying listeners
+                        if (this.activeCall) {
+                            console.log(`Changing call state from ${this.activeCall.state} to connected`);
+                            // Ensure we update the active call state first
+                            this.activeCall.state = 'connected';
+                        }
 
                         // Notify listeners about the state change
+                        // This is the key fix: Always notify with 'connected' state when we receive an answer
                         this._notifyListeners('call_state_changed', {
                             state: 'connected',
                             contact: senderKey
@@ -692,7 +723,6 @@ class CallService {
             return false;
         }
     }
-
     /**
   * Send a signaling message to another peer
   * @param {string} recipientKey Recipient's public key
@@ -807,6 +837,50 @@ class CallService {
      */
     isInCall() {
         return !!this.activeCall;
+    }
+
+    /**
+ * Force state synchronization for active calls
+ * This method will check if there's an active WebRTC connection
+ * and ensure the UI state matches the actual connection state
+ */
+    forceStateSync() {
+        try {
+            // If we have an active call but it's still in outgoing state
+            if (this.activeCall && this.activeCall.state === 'outgoing') {
+                // Check the actual WebRTC connection state
+                if (window.callService && window.callService.webRTCService) {
+                    const connection = window.callService.webRTCService.peerConnection;
+
+                    if (connection) {
+                        console.log('Force syncing call state. Current states:');
+                        console.log('- Call state:', this.activeCall.state);
+                        console.log('- Connection state:', connection.connectionState);
+                        console.log('- ICE connection state:', connection.iceConnectionState);
+                        console.log('- Signaling state:', connection.signalingState);
+
+                        // If WebRTC shows connected but our UI doesn't, fix it
+                        if (
+                            connection.connectionState === 'connected' ||
+                            connection.iceConnectionState === 'connected' ||
+                            connection.iceConnectionState === 'completed'
+                        ) {
+                            console.log('⚠️ State mismatch detected! Fixing call state');
+                            this.activeCall.state = 'connected';
+                            this._notifyListeners('call_state_changed', {
+                                state: 'connected',
+                                contact: this.activeCall.contactKey
+                            });
+                            return true;
+                        }
+                    }
+                }
+            }
+            return false;
+        } catch (error) {
+            console.error('Error in forceStateSync:', error);
+            return false;
+        }
     }
 
     /**
