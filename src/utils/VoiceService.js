@@ -1,5 +1,6 @@
 'use client'
 
+import Peer from 'simple-peer'
 import conversationManager from './ConversationManager'
 
 class VoiceService {
@@ -10,42 +11,55 @@ class VoiceService {
     this.isMuted = false;
     this.listeners = [];
     this.remoteUserKey = null; // Store the remote user's public key
-    this.activeCallUsers = new Set(); // Track which users are in calls
     
     // WebRTC objects
-    this.peerConnection = null;
+    this.peer = null;
     this.localStream = null;
     this.remoteStream = null;
     
-    // ICE servers config - using multiple STUN servers for reliability
-    // And a free TURN server as backup when direct connection fails
-    this.iceServers = {
-      iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:stun2.l.google.com:19302' },
-        { urls: 'stun:stun3.l.google.com:19302' },
-        { urls: 'stun:stun4.l.google.com:19302' },
-        { urls: 'stun:stun.ekiga.net' },
-        { urls: 'stun:stun.ideasip.com' },
-        { urls: 'stun:stun.schlund.de' },
-        // Free TURN servers - will only be used if STUN fails
-        {
-          urls: 'turn:openrelay.metered.ca:80',
-          username: 'openrelayproject',
-          credential: 'openrelayproject'
-        },
-        {
-          urls: 'turn:openrelay.metered.ca:443',
-          username: 'openrelayproject',
-          credential: 'openrelayproject'
-        }
-      ],
-      iceCandidatePoolSize: 10
-    };
+    // Enhanced ICE servers config with more reliable STUN/TURN servers
+    this.iceServers = [
+      // STUN servers
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun2.l.google.com:19302' },
+      { urls: 'stun:stun3.l.google.com:19302' },
+      { urls: 'stun:stun4.l.google.com:19302' },
+      { urls: 'stun:stun.stunprotocol.org:3478' },
+      { urls: 'stun:stun.voiparound.com' },
+      
+      // TURN servers - essential for NAT traversal when STUN fails
+      // Coturn public server
+      {
+        urls: 'turn:ns515130.ip-167-114-103.net:3478',
+        username: 'stun',
+        credential: 'stun'
+      },
+      // Public TURN servers from openrelay.metered.ca
+      {
+        urls: 'turn:openrelay.metered.ca:80',
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
+      },
+      {
+        urls: 'turn:openrelay.metered.ca:443',
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
+      },
+      {
+        urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
+      }
+    ];
     
     // Debug settings
     this.debug = true;
+    this.logIceEvents = true; // Log ICE connection events for debugging
+    
+    // Track connection timing
+    this.connectionTimer = null;
+    this.connectionStartTime = null;
   }
   
   /**
@@ -64,7 +78,20 @@ class VoiceService {
     if (this.initialized) return true;
     
     try {
-      this.log('Initializing WebRTC voice service');
+      this.log('Initializing WebRTC voice service with Simple-Peer');
+      
+      // Check if browser has WebRTC support
+      if (typeof RTCPeerConnection === 'undefined') {
+        console.error('WebRTC is not supported in this browser');
+        return false;
+      }
+      
+      // Check if browser has getUserMedia support
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        console.error('getUserMedia is not supported in this browser');
+        return false;
+      }
+      
       this.initialized = true;
       
       // Make available globally
@@ -123,11 +150,23 @@ class VoiceService {
       this.log('Requesting microphone access');
       try {
         this.localStream = await navigator.mediaDevices.getUserMedia({ 
-          audio: true, 
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
+          }, 
           video: false 
         });
         
-        this.log('Microphone access granted');
+        this.log('Microphone access granted, tracks:', this.localStream.getTracks().length);
+        
+        // Verify audio tracks
+        const audioTracks = this.localStream.getAudioTracks();
+        if (audioTracks.length === 0) {
+          throw new Error('No audio track available');
+        }
+        
+        this.log('Audio track:', audioTracks[0].label, 'enabled:', audioTracks[0].enabled);
       } catch (mediaError) {
         console.error('Failed to get audio stream:', mediaError);
         throw new Error('Microphone access denied. Please allow microphone access to make calls.');
@@ -137,51 +176,35 @@ class VoiceService {
       this.callId = `call-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
       this.log('Generated call ID:', this.callId);
       
-      // Create a new RTCPeerConnection
-      this.log('Creating peer connection with ICE servers');
-      this.peerConnection = new RTCPeerConnection(this.iceServers);
-      
-      // Set up connection state monitoring
-      this._setupConnectionMonitoring();
-      
-      // Add local tracks to the connection
-      this.log('Adding local audio tracks to peer connection');
-      this.localStream.getTracks().forEach(track => {
-        this.peerConnection.addTrack(track, this.localStream);
-      });
-      
-      // Listen for ICE candidates
-      this.peerConnection.onicecandidate = (event) => {
-        if (event.candidate) {
-          this.log('New ICE candidate:', event.candidate.candidate.substring(0, 50) + '...');
-          this._sendSignalingMessage({
-            type: 'ice_candidate',
-            candidate: event.candidate
-          });
-        } else {
-          this.log('ICE candidate gathering complete');
+      // Start tracking connection time
+      this.connectionStartTime = Date.now();
+      this.connectionTimer = setTimeout(() => {
+        if (this.callState === 'connecting') {
+          this.log('Connection timeout after 30s, still trying...');
+          // Don't end the call, but notify for debugging
         }
-      };
+      }, 30000);
       
-      // Listen for remote stream
-      this.peerConnection.ontrack = (event) => {
-        this.log('Received remote track:', event.streams[0]);
-        this.remoteStream = event.streams[0];
-        this._notifyListeners('remote_stream_added', { stream: this.remoteStream });
-      };
+      // Create peer as initiator with explicit config
+      this.log('Creating peer connection as initiator');
+      try {
+        this.peer = new Peer({
+          initiator: true,
+          stream: this.localStream,
+          trickle: true,
+          config: { iceServers: this.iceServers },
+          sdpTransform: (sdp) => {
+            this.log('SDP created:', sdp.split('\n').length, 'lines');
+            return sdp;
+          }
+        });
+      } catch (peerError) {
+        console.error('Error creating Peer:', peerError);
+        throw new Error('Failed to create call connection: ' + peerError.message);
+      }
       
-      // Create offer
-      this.log('Creating SDP offer');
-      const offer = await this.peerConnection.createOffer();
-      this.log('Setting local description (offer)');
-      await this.peerConnection.setLocalDescription(offer);
-      
-      // Send the offer to the remote user
-      this.log('Sending offer to remote user');
-      this._sendSignalingMessage({
-        type: 'offer',
-        offer: this.peerConnection.localDescription
-      });
+      // Set up event handlers with enhanced debugging
+      this._setupPeerEvents();
       
       // Update call state to connecting
       this.callState = 'connecting';
@@ -211,15 +234,6 @@ class VoiceService {
       
       this.log('Joining call:', callId, 'with contact:', contactPublicKey);
       
-      // Extract contact public key from call invitation if not provided
-      if (!contactPublicKey) {
-        // Try to extract from call ID format or invitation content
-        const senderInfo = callId.split('-')[3]; // Assuming format includes sender info
-        if (senderInfo) {
-          contactPublicKey = senderInfo;
-        }
-      }
-      
       if (!contactPublicKey) {
         throw new Error('Cannot join call: missing contact information');
       }
@@ -231,48 +245,36 @@ class VoiceService {
       this.log('Requesting microphone access');
       try {
         this.localStream = await navigator.mediaDevices.getUserMedia({ 
-          audio: true, 
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
+          },
           video: false 
         });
         
-        this.log('Microphone access granted');
+        this.log('Microphone access granted, tracks:', this.localStream.getTracks().length);
+        
+        // Verify audio tracks
+        const audioTracks = this.localStream.getAudioTracks();
+        if (audioTracks.length === 0) {
+          throw new Error('No audio track available');
+        }
+        
+        this.log('Audio track:', audioTracks[0].label, 'enabled:', audioTracks[0].enabled);
       } catch (mediaError) {
         console.error('Failed to get audio stream:', mediaError);
         throw new Error('Microphone access denied. Please allow microphone access to make calls.');
       }
       
-      // Create a peer connection now to be ready for the offer
-      this.log('Creating peer connection with ICE servers');
-      this.peerConnection = new RTCPeerConnection(this.iceServers);
-      
-      // Set up connection state monitoring
-      this._setupConnectionMonitoring();
-      
-      // Add local tracks to the connection
-      this.log('Adding local audio tracks to peer connection');
-      this.localStream.getTracks().forEach(track => {
-        this.peerConnection.addTrack(track, this.localStream);
-      });
-      
-      // Listen for ICE candidates
-      this.peerConnection.onicecandidate = (event) => {
-        if (event.candidate) {
-          this.log('New ICE candidate:', event.candidate.candidate.substring(0, 50) + '...');
-          this._sendSignalingMessage({
-            type: 'ice_candidate',
-            candidate: event.candidate
-          });
-        } else {
-          this.log('ICE candidate gathering complete');
+      // Start tracking connection time
+      this.connectionStartTime = Date.now();
+      this.connectionTimer = setTimeout(() => {
+        if (this.callState === 'connecting') {
+          this.log('Connection timeout after 30s, still trying...');
+          // Don't end the call, but notify for debugging
         }
-      };
-      
-      // Listen for remote stream
-      this.peerConnection.ontrack = (event) => {
-        this.log('Received remote track:', event.streams[0]);
-        this.remoteStream = event.streams[0];
-        this._notifyListeners('remote_stream_added', { stream: this.remoteStream });
-      };
+      }, 30000);
       
       // Update UI to show we're connecting
       this.callState = 'connecting';
@@ -297,69 +299,162 @@ class VoiceService {
   }
   
   /**
-   * Set up monitoring for the WebRTC connection state
+   * Set up event handlers for the Simple-Peer instance
    * @private
    */
-  _setupConnectionMonitoring() {
-    if (!this.peerConnection) return;
+  _setupPeerEvents() {
+    if (!this.peer) return;
     
-    // Monitor connection state changes
-    this.peerConnection.onconnectionstatechange = () => {
-      this.log('Connection state changed:', this.peerConnection.connectionState);
+    // Handle signaling data
+    this.peer.on('signal', data => {
+      this.log('Generated signal data, sending to peer:', data.type);
+      this._sendSignalingMessage({
+        type: 'webrtc_signal',
+        signal: data
+      });
+    });
+    
+    // Handle successful connection
+    this.peer.on('connect', () => {
+      this.log('Peer connection established!', 
+        'Time taken:', (Date.now() - this.connectionStartTime) / 1000, 'seconds');
       
-      switch (this.peerConnection.connectionState) {
-        case 'connected':
-          this.log('WebRTC connection established successfully');
-          if (this.callState !== 'connected') {
-            this.callState = 'connected';
-            this._notifyListeners('call_state_changed', {
-              state: 'connected',
-              contact: this.remoteUserKey
-            });
-          }
-          break;
-          
-        case 'disconnected':
-        case 'failed':
-          console.warn('WebRTC connection failed or disconnected');
-          if (this.callState === 'connected' || this.callState === 'connecting') {
-            this.callState = 'ended';
-            this._notifyListeners('call_state_changed', {
-              state: 'ended',
-              contact: this.remoteUserKey
-            });
-            
-            // Clean up after a delay
-            setTimeout(() => this._cleanupCall(), 3000);
-          }
-          break;
-          
-        case 'closed':
-          this.log('WebRTC connection closed');
-          break;
+      // Clear connection timer
+      if (this.connectionTimer) {
+        clearTimeout(this.connectionTimer);
+        this.connectionTimer = null;
       }
-    };
-    
-    // Monitor ICE connection state
-    this.peerConnection.oniceconnectionstatechange = () => {
-      this.log('ICE connection state changed:', this.peerConnection.iceConnectionState);
       
-      if (this.peerConnection.iceConnectionState === 'failed') {
-        console.warn('ICE connection failed, attempting to restart ICE');
-        // Try to restart ICE
-        this.peerConnection.restartIce();
+      this.callState = 'connected';
+      this._notifyListeners('call_state_changed', {
+        state: 'connected',
+        contact: this.remoteUserKey
+      });
+      
+      // Start heartbeat to keep connection alive
+      this._startHeartbeat();
+      
+      // Send initial "connected" message
+      if (this.peer.connected) {
+        try {
+          this.peer.send(JSON.stringify({ type: 'connected' }));
+        } catch (e) {
+          console.warn('Failed to send connected message:', e);
+        }
       }
-    };
+    });
     
-    // Monitor ICE gathering state
-    this.peerConnection.onicegatheringstatechange = () => {
-      this.log('ICE gathering state changed:', this.peerConnection.iceGatheringState);
-    };
+    // Handle incoming stream
+    this.peer.on('stream', stream => {
+      this.log('Received remote stream, tracks:', stream.getTracks().length);
+      
+      // Check if it has audio tracks
+      const audioTracks = stream.getAudioTracks();
+      if (audioTracks.length > 0) {
+        this.log('Remote audio track:', audioTracks[0].label, 'enabled:', audioTracks[0].enabled);
+      } else {
+        console.warn('Remote stream has no audio tracks');
+      }
+      
+      this.remoteStream = stream;
+      this._notifyListeners('remote_stream_added', { stream });
+    });
     
-    // Monitor signaling state
-    this.peerConnection.onsignalingstatechange = () => {
-      this.log('Signaling state changed:', this.peerConnection.signalingState);
-    };
+    // Handle data channel messages
+    this.peer.on('data', data => {
+      try {
+        const message = JSON.parse(data.toString());
+        this.log('Received data channel message:', message.type);
+        
+        if (message.type === 'heartbeat') {
+          // Send heartbeat response
+          this.peer.send(JSON.stringify({ type: 'heartbeat_ack' }));
+        }
+      } catch (e) {
+        this.log('Received non-JSON data:', data.toString());
+      }
+    });
+    
+    // Handle errors
+    this.peer.on('error', err => {
+      console.error('Peer connection error:', err);
+      
+      // Check for specific error types
+      if (err.code === 'ERR_ICE_CONNECTION_FAILURE') {
+        console.warn('ICE connection failure - STUN/TURN servers may be unreachable');
+      }
+      
+      if (this.callState === 'connected' || this.callState === 'connecting') {
+        this.callState = 'ended';
+        this._notifyListeners('call_state_changed', {
+          state: 'ended',
+          contact: this.remoteUserKey,
+          error: err.message
+        });
+        
+        // Clean up after a delay
+        setTimeout(() => this._cleanupCall(), 3000);
+      }
+    });
+    
+    // Handle peer closing
+    this.peer.on('close', () => {
+      this.log('Peer connection closed');
+      if (this.callState === 'connected' || this.callState === 'connecting') {
+        this.callState = 'ended';
+        this._notifyListeners('call_state_changed', {
+          state: 'ended',
+          contact: this.remoteUserKey
+        });
+        
+        // Clean up after a delay
+        setTimeout(() => this._cleanupCall(), 3000);
+      }
+    });
+    
+    // Handle ICE connection state changes if available
+    try {
+      const pc = this.peer._pc;
+      if (pc && this.logIceEvents) {
+        pc.addEventListener('iceconnectionstatechange', () => {
+          this.log('ICE connection state changed:', pc.iceConnectionState);
+          
+          if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+            const elapsedTime = (Date.now() - this.connectionStartTime) / 1000;
+            this.log(`ICE connected in ${elapsedTime.toFixed(1)} seconds`);
+          }
+        });
+        
+        pc.addEventListener('icegatheringstatechange', () => {
+          this.log('ICE gathering state changed:', pc.iceGatheringState);
+        });
+        
+        pc.addEventListener('signalingstatechange', () => {
+          this.log('Signaling state changed:', pc.signalingState);
+        });
+        
+        // Log ICE candidates
+        pc.addEventListener('icecandidate', (event) => {
+          if (event.candidate) {
+            this.log('ICE candidate:', 
+              event.candidate.protocol,
+              event.candidate.type,
+              event.candidate.candidate.includes('relay') ? '(TURN)' : '(STUN)');
+          } else {
+            this.log('ICE candidate gathering complete');
+          }
+        });
+        
+        // Setup ICE connection timeout
+        setTimeout(() => {
+          if (pc.iceConnectionState === 'checking' || pc.iceConnectionState === 'new') {
+            this.log('ICE connection taking too long (15s), may be blocked by firewall');
+          }
+        }, 15000);
+      }
+    } catch (e) {
+      console.warn('Could not access internal peer connection for monitoring:', e);
+    }
   }
   
   /**
@@ -371,252 +466,134 @@ class VoiceService {
       return;
     }
     
-    this.log('Processing signal from', senderKey, ':', message.type);
+    // Extract real data if nested
+    let actualMessage = message;
+    if (message && message.data) {
+      actualMessage = message.data;
+    }
+    
+    const messageType = actualMessage.type || (actualMessage.signal ? actualMessage.signal.type : 'unknown');
+    this.log('Processing signal from', senderKey, ':', messageType);
     
     try {
-      switch (message.type) {
-        case 'offer':
-          await this._handleOffer(senderKey, message.offer);
-          break;
+      // Handle WebRTC signaling data
+      if (actualMessage.type === 'webrtc_signal' && actualMessage.signal) {
+        // If we don't have a peer yet, but we're receiving a signal, create one
+        if (!this.peer && ['offer', 'sdp'].includes(actualMessage.signal.type)) {
+          this.log('Received offer but no peer exists, creating one');
+          
+          try {
+            // Request microphone access if we don't have it yet
+            if (!this.localStream) {
+              this.localStream = await navigator.mediaDevices.getUserMedia({
+                audio: {
+                  echoCancellation: true,
+                  noiseSuppression: true,
+                  autoGainControl: true
+                },
+                video: false
+              });
+              
+              // Verify audio tracks
+              const audioTracks = this.localStream.getAudioTracks();
+              if (audioTracks.length === 0) {
+                console.warn('No audio track available after getUserMedia');
+              } else {
+                this.log('Audio track created:', audioTracks[0].label);
+              }
+            }
+            
+            // Create peer as non-initiator since we're receiving an offer
+            this.peer = new Peer({
+              initiator: false,
+              stream: this.localStream,
+              trickle: true,
+              config: { iceServers: this.iceServers },
+              sdpTransform: (sdp) => {
+                this.log('SDP received:', sdp.split('\n').length, 'lines');
+                return sdp;
+              }
+            });
+            
+            // Set up event handlers
+            this._setupPeerEvents();
+            
+            // Set remote user key and update state
+            this.remoteUserKey = senderKey;
+            this.callState = 'connecting';
+            this._notifyListeners('call_state_changed', {
+              state: 'connecting',
+              contact: senderKey
+            });
+            
+            // Start tracking connection time
+            this.connectionStartTime = Date.now();
+          } catch (error) {
+            console.error('Error creating peer from offer:', error);
+            return;
+          }
+        }
         
-        case 'answer':
-          await this._handleAnswer(message.answer);
-          break;
+        // If we have a peer, signal it with the received data
+        if (this.peer) {
+          this.log('Signaling peer with received data:', actualMessage.signal.type);
+          this.peer.signal(actualMessage.signal);
+        } else {
+          console.warn('Received signal but no peer exists');
+        }
+      }
+      // Handle join message
+      else if (actualMessage.type === 'join') {
+        this.log('Remote user joining call:', senderKey, actualMessage.callId);
         
-        case 'ice_candidate':
-          await this._handleIceCandidate(message.candidate);
-          break;
-        
-        case 'join':
-          await this._handleJoin(senderKey, message.callId);
-          break;
-        
-        case 'end_call':
-          this._handleEndCall(senderKey);
-          break;
-        
-        default:
-          console.warn('Unknown signal type:', message.type);
+        // If we don't have a peer yet, create one as initiator
+        if (!this.peer) {
+          try {
+            // Request microphone access if we don't have it yet
+            if (!this.localStream) {
+              this.localStream = await navigator.mediaDevices.getUserMedia({
+                audio: {
+                  echoCancellation: true,
+                  noiseSuppression: true,
+                  autoGainControl: true
+                },
+                video: false
+              });
+            }
+            
+            // Create peer as initiator since we're accepting a join
+            this.peer = new Peer({
+              initiator: true,
+              stream: this.localStream,
+              trickle: true,
+              config: { iceServers: this.iceServers }
+            });
+            
+            // Set up event handlers
+            this._setupPeerEvents();
+            
+            // Set remote user key and update state
+            this.remoteUserKey = senderKey;
+            this.callState = 'connecting';
+            this._notifyListeners('call_state_changed', {
+              state: 'connecting',
+              contact: senderKey
+            });
+            
+            // Start tracking connection time
+            this.connectionStartTime = Date.now();
+          } catch (error) {
+            console.error('Error creating peer from join:', error);
+            return;
+          }
+        }
+      }
+      // Handle end call message
+      else if (actualMessage.type === 'end_call') {
+        this._handleEndCall(senderKey);
       }
     } catch (error) {
       console.error('Error processing signal:', error);
-    }
-  }
-  
-  /**
-   * Handle an offer from a remote user
-   */
-  async _handleOffer(senderKey, offer) {
-    try {
-      this.log('Received offer from', senderKey);
-      
-      // If we're not in a call with this user, initiate one
-      if (!this.callState || this.remoteUserKey !== senderKey) {
-        // Request audio permissions if not already done
-        if (!this.localStream) {
-          this.log('Requesting microphone access');
-          try {
-            this.localStream = await navigator.mediaDevices.getUserMedia({ 
-              audio: true, 
-              video: false 
-            });
-            
-            this.log('Microphone access granted');
-          } catch (mediaError) {
-            console.error('Failed to get audio stream:', mediaError);
-            throw new Error('Microphone access denied. Please allow microphone access to make calls.');
-          }
-        }
-        
-        this.remoteUserKey = senderKey;
-        this.callState = 'connecting';
-        this._notifyListeners('call_state_changed', { 
-          state: 'connecting',
-          contact: senderKey
-        });
-      }
-      
-      // Create peer connection if needed
-      if (!this.peerConnection) {
-        this.log('Creating peer connection with ICE servers');
-        this.peerConnection = new RTCPeerConnection(this.iceServers);
-        
-        // Set up connection state monitoring
-        this._setupConnectionMonitoring();
-        
-        // Add local tracks
-        this.localStream.getTracks().forEach(track => {
-          this.peerConnection.addTrack(track, this.localStream);
-        });
-        
-        // Set up ICE candidate handling
-        this.peerConnection.onicecandidate = (event) => {
-          if (event.candidate) {
-            this.log('New ICE candidate:', event.candidate.candidate.substring(0, 50) + '...');
-            this._sendSignalingMessage({
-              type: 'ice_candidate',
-              candidate: event.candidate
-            });
-          } else {
-            this.log('ICE candidate gathering complete');
-          }
-        };
-        
-        // Set up remote track handling
-        this.peerConnection.ontrack = (event) => {
-          this.log('Received remote track');
-          this.remoteStream = event.streams[0];
-          this._notifyListeners('remote_stream_added', { stream: this.remoteStream });
-        };
-      }
-      
-      // Set the remote description (the offer)
-      this.log('Setting remote description (offer)');
-      const offerDesc = new RTCSessionDescription(offer);
-      await this.peerConnection.setRemoteDescription(offerDesc);
-      
-      // Create an answer
-      this.log('Creating answer');
-      const answer = await this.peerConnection.createAnswer();
-      
-      this.log('Setting local description (answer)');
-      await this.peerConnection.setLocalDescription(answer);
-      
-      // Send the answer
-      this.log('Sending answer to caller');
-      this._sendSignalingMessage({
-        type: 'answer',
-        answer: this.peerConnection.localDescription
-      });
-    } catch (error) {
-      console.error('Error handling offer:', error);
-      this.endCall();
-    }
-  }
-  
-  /**
-   * Handle an answer from a remote user
-   */
-  async _handleAnswer(answer) {
-    try {
-      this.log('Received answer from remote user');
-      
-      if (!this.peerConnection) {
-        console.warn('No peer connection established');
-        return;
-      }
-      
-      // Set the remote description (the answer)
-      this.log('Setting remote description (answer)');
-      const answerDesc = new RTCSessionDescription(answer);
-      await this.peerConnection.setRemoteDescription(answerDesc);
-    } catch (error) {
-      console.error('Error handling answer:', error);
-    }
-  }
-  
-  /**
-   * Handle an ICE candidate from a remote user
-   */
-  async _handleIceCandidate(candidate) {
-    try {
-      if (!this.peerConnection) {
-        console.warn('No peer connection established');
-        return;
-      }
-      
-      if (!candidate) {
-        this.log('Received null ICE candidate - end of candidates');
-        return;
-      }
-      
-      // Add the ICE candidate
-      this.log('Adding remote ICE candidate');
-      await this.peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
-    } catch (error) {
-      console.error('Error handling ICE candidate:', error);
-    }
-  }
-  
-  /**
-   * Handle a join message
-   */
-  async _handleJoin(senderKey, callId) {
-    try {
-      this.log('Remote user joining call:', senderKey, callId);
-      
-      // If we're the caller and this is our call ID
-      if (this.callId === callId) {
-        // If we don't have a peer connection yet, create one
-        if (!this.peerConnection) {
-          // Request audio permissions if not already done
-          if (!this.localStream) {
-            this.log('Requesting microphone access');
-            try {
-              this.localStream = await navigator.mediaDevices.getUserMedia({ 
-                audio: true, 
-                video: false 
-              });
-              
-              this.log('Microphone access granted');
-            } catch (mediaError) {
-              console.error('Failed to get audio stream:', mediaError);
-              throw new Error('Microphone access denied. Please allow microphone access to make calls.');
-            }
-          }
-          
-          this.log('Creating peer connection with ICE servers');
-          this.peerConnection = new RTCPeerConnection(this.iceServers);
-          
-          // Set up connection state monitoring
-          this._setupConnectionMonitoring();
-          
-          // Add local tracks
-          this.localStream.getTracks().forEach(track => {
-            this.peerConnection.addTrack(track, this.localStream);
-          });
-          
-          // Set up ICE candidate handling
-          this.peerConnection.onicecandidate = (event) => {
-            if (event.candidate) {
-              this.log('New ICE candidate:', event.candidate.candidate.substring(0, 50) + '...');
-              this._sendSignalingMessage({
-                type: 'ice_candidate',
-                candidate: event.candidate
-              });
-            } else {
-              this.log('ICE candidate gathering complete');
-            }
-          };
-          
-          // Set up remote track handling
-          this.peerConnection.ontrack = (event) => {
-            this.log('Received remote track');
-            this.remoteStream = event.streams[0];
-            this._notifyListeners('remote_stream_added', { stream: this.remoteStream });
-          };
-        }
-        
-        // Store the remote user key
-        this.remoteUserKey = senderKey;
-        
-        // Create and send an offer
-        this.log('Creating offer for remote user');
-        const offer = await this.peerConnection.createOffer();
-        
-        this.log('Setting local description (offer)');
-        await this.peerConnection.setLocalDescription(offer);
-        
-        this.log('Sending offer to remote user');
-        this._sendSignalingMessage({
-          type: 'offer',
-          offer: this.peerConnection.localDescription
-        });
-      } else {
-        console.warn('Received join for unknown call ID:', callId);
-      }
-    } catch (error) {
-      console.error('Error handling join:', error);
     }
   }
   
@@ -655,8 +632,7 @@ class VoiceService {
       // Use conversation manager to send call signal
       if (conversationManager) {
         conversationManager.sendCallSignal(this.remoteUserKey, {
-          type: 'webrtc_signal',
-          data: message,
+          ...message,
           callId: this.callId
         });
       } else {
@@ -665,6 +641,26 @@ class VoiceService {
     } catch (error) {
       console.error('Error sending signal:', error);
     }
+  }
+  
+  /**
+   * Send periodic heartbeats to keep the connection alive
+   * @private
+   */
+  _startHeartbeat() {
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+    }
+    
+    this.heartbeatInterval = setInterval(() => {
+      if (this.peer && this.peer.connected) {
+        try {
+          this.peer.send(JSON.stringify({ type: 'heartbeat', time: Date.now() }));
+        } catch (e) {
+          console.warn('Failed to send heartbeat:', e);
+        }
+      }
+    }, 10000); // Every 10 seconds
   }
   
   /**
@@ -677,6 +673,12 @@ class VoiceService {
       }
       
       this.log('Ending call');
+      
+      // Clear connection timer if it exists
+      if (this.connectionTimer) {
+        clearTimeout(this.connectionTimer);
+        this.connectionTimer = null;
+      }
       
       // Notify the remote user
       if (this.remoteUserKey) {
@@ -711,14 +713,26 @@ class VoiceService {
   _cleanupCall() {
     this.log('Cleaning up call resources');
     
-    // Close peer connection
-    if (this.peerConnection) {
+    // Clear connection timer if it exists
+    if (this.connectionTimer) {
+      clearTimeout(this.connectionTimer);
+      this.connectionTimer = null;
+    }
+    
+    // Stop heartbeat
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = null;
+    }
+    
+    // Destroy peer connection
+    if (this.peer) {
       try {
-        this.peerConnection.close();
+        this.peer.destroy();
       } catch (e) {
-        console.error('Error closing peer connection:', e);
+        console.error('Error destroying peer:', e);
       }
-      this.peerConnection = null;
+      this.peer = null;
     }
     
     // Stop local media tracks
@@ -781,6 +795,40 @@ class VoiceService {
    */
   getMuteState() {
     return this.isMuted;
+  }
+  
+  /**
+   * Get diagnostic info for debugging
+   */
+  getDiagnosticInfo() {
+    const info = {
+      initialized: this.initialized,
+      callState: this.callState,
+      callId: this.callId,
+      isMuted: this.isMuted,
+      hasLocalStream: !!this.localStream,
+      hasRemoteStream: !!this.remoteStream,
+      peerConnected: this.peer ? this.peer.connected : false,
+      peerDestroyed: this.peer ? this.peer.destroyed : true,
+      browserInfo: {
+        userAgent: navigator.userAgent,
+        webRTCSupport: typeof RTCPeerConnection !== 'undefined',
+        mediaDevicesSupport: !!navigator.mediaDevices
+      }
+    };
+    
+    // Add ICE connection info if available
+    try {
+      if (this.peer && this.peer._pc) {
+        info.iceConnectionState = this.peer._pc.iceConnectionState;
+        info.iceGatheringState = this.peer._pc.iceGatheringState;
+        info.signalingState = this.peer._pc.signalingState;
+      }
+    } catch (e) {
+      info.peerDiagnosticError = e.message;
+    }
+    
+    return info;
   }
 }
 

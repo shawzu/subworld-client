@@ -6,7 +6,8 @@ import {
   PhoneOff,
   Mic,
   MicOff,
-  X
+  X,
+  Loader
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 
@@ -42,6 +43,20 @@ const CallUI = ({
     }
   }, [callState])
 
+  // Get call status text
+  const getStatusText = () => {
+    switch (callState) {
+      case 'connecting':
+        return 'Connecting...'
+      case 'connected':
+        return callDuration
+      case 'ended':
+        return 'Call ended'
+      default:
+        return 'Call'
+    }
+  }
+
   return (
     <AnimatePresence>
       {callState && (
@@ -55,14 +70,17 @@ const CallUI = ({
         >
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center">
-              <div className="w-10 h-10 rounded-full bg-blue-500 flex items-center justify-center mr-3">
-                <Phone className="text-white" size={20} />
+              <div className={`w-10 h-10 rounded-full ${callState === 'connecting' ? 'bg-yellow-500' : callState === 'connected' ? 'bg-green-500' : 'bg-red-500'} flex items-center justify-center mr-3`}>
+                {callState === 'connecting' ? (
+                  <Loader className="text-white animate-spin" size={20} />
+                ) : (
+                  <Phone className="text-white" size={20} />
+                )}
               </div>
               <div>
                 <h3 className="font-medium text-white">{contactName}</h3>
                 <p className="text-sm text-gray-300">
-                  {callState === 'connected' && callDuration}
-                  {callState === 'ended' && 'Call ended'}
+                  {getStatusText()}
                 </p>
               </div>
             </div>
@@ -108,6 +126,16 @@ const CallUI = ({
                   <PhoneOff size={20} />
                 </button>
               </>
+            )}
+
+            {/* Connecting call buttons */}
+            {callState === 'connecting' && (
+              <button
+                onClick={onHangUp}
+                className="w-12 h-12 rounded-full bg-red-600 flex items-center justify-center text-white hover:bg-red-700 transition-colors"
+              >
+                <PhoneOff size={20} />
+              </button>
             )}
 
             {/* Call ended button */}
