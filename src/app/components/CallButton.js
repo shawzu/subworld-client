@@ -9,31 +9,58 @@ export default function CallButton({
   contactName
 }) {
   const [isHovered, setIsHovered] = useState(false)
+  const [isInitiating, setIsInitiating] = useState(false)
   
-  const handleClick = () => {
-    console.log('Call button clicked for contact:', contactPublicKey);
+  const handleClick = async () => {
+    if (isInitiating) return;
     
-    if (typeof window !== 'undefined' && window.voiceService) {
-      console.log('Using window.voiceService to initiate call');
-      window.voiceService.initiateCall(contactPublicKey)
-        .then(result => {
-          console.log('Call initiation result:', result);
-        })
-        .catch(err => {
-          console.error('Call initiation error:', err);
-        });
-    } else if (voiceService) {
-      console.log('Using imported voiceService to initiate call');
-      voiceService.initiateCall(contactPublicKey)
-        .then(result => {
-          console.log('Call initiation result:', result);
-        })
-        .catch(err => {
-          console.error('Call initiation error:', err);
-        });
-    } else {
-      console.error('Voice service not available');
-      alert('Call service is not available. Please try again later.');
+    console.log('Call button clicked for contact:', contactPublicKey);
+    setIsInitiating(true);
+    
+    try {
+      // Check if browser supports required WebRTC APIs
+      if (typeof navigator.mediaDevices === 'undefined' || 
+          typeof navigator.mediaDevices.getUserMedia === 'undefined' ||
+          typeof RTCPeerConnection === 'undefined') {
+        alert('Your browser does not support WebRTC. Please use a modern browser like Chrome, Firefox, Safari, or Edge.');
+        setIsInitiating(false);
+        return;
+      }
+      
+      // Check if voice service is available
+      if (typeof window !== 'undefined' && window.voiceService) {
+        // Check if already initialized, initialize if needed
+        if (!window.voiceService.initialized) {
+          await window.voiceService.initialize();
+        }
+        
+        // Check if already in a call
+        if (window.voiceService.isInCall()) {
+          alert('You are already in a call. Please end the current call before starting a new one.');
+          setIsInitiating(false);
+          return;
+        }
+        
+        // Initiate call
+        const success = await window.voiceService.initiateCall(contactPublicKey);
+        if (!success) {
+          throw new Error('Failed to initiate call');
+        }
+      } else {
+        console.error('Voice service not available');
+        alert('Call service is not available. Please try again later.');
+      }
+    } catch (error) {
+      console.error('Error initiating call:', error);
+      
+      // Show friendly error message based on the error type
+      if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+        alert('Microphone access was denied. Please allow microphone access to make calls.');
+      } else {
+        alert('Could not start the call. Please try again.');
+      }
+    } finally {
+      setIsInitiating(false);
     }
   }
 
@@ -42,10 +69,13 @@ export default function CallButton({
       onClick={handleClick}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
-      className="p-2 rounded-full hover:bg-blue-600 bg-blue-500 text-white transition-colors duration-200 flex items-center justify-center"
+      disabled={isInitiating}
+      className={`p-2 rounded-full ${
+        isInitiating ? 'bg-gray-500 cursor-not-allowed' : 'bg-blue-500 hover:bg-blue-600'
+      } text-white transition-colors duration-200 flex items-center justify-center`}
       title={`Call ${contactName}`}
     >
-      <Phone size={20} />
+      <Phone size={20} className={isInitiating ? 'animate-pulse' : ''} />
     </button>
   )
 }

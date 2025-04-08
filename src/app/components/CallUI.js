@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import {
   Phone,
   PhoneOff,
@@ -19,39 +19,32 @@ const CallUI = ({
   onDecline,
   onHangUp,
   onToggleMute,
-  isMuted
+  isMuted,
+  callDuration
 }) => {
-  const [callDuration, setCallDuration] = useState(0)
-  const [durationTimer, setDurationTimer] = useState(null)
-
-  // Start timer when call is connected
-  useEffect(() => {
-    if (callState === 'connected') {
-      const timer = setInterval(() => {
-        setCallDuration(prev => prev + 1)
-      }, 1000)
-      setDurationTimer(timer)
-      return () => clearInterval(timer)
-    } else if (durationTimer) {
-      clearInterval(durationTimer)
-      setDurationTimer(null)
-      setCallDuration(0)
-    }
-  }, [callState])
-
-  // Format duration as mm:ss
-  const formatDuration = (seconds) => {
-    const mins = Math.floor(seconds / 60).toString().padStart(2, '0')
-    const secs = (seconds % 60).toString().padStart(2, '0')
-    return `${mins}:${secs}`
-  }
-
   // UI animations
   const containerVariants = {
     hidden: { opacity: 0, y: 50 },
     visible: { opacity: 1, y: 0, transition: { duration: 0.3 } },
     exit: { opacity: 0, y: 50, transition: { duration: 0.2 } }
   }
+
+  // Audio visualization state (simplified for this demo)
+  const [audioLevel, setAudioLevel] = useState(0)
+  
+  // Simulate audio levels for visualization
+  useEffect(() => {
+    if (callState === 'connected') {
+      const interval = setInterval(() => {
+        // Generate random value between 0.2 and 1 to simulate audio activity
+        setAudioLevel(0.2 + Math.random() * 0.8)
+      }, 200)
+      
+      return () => clearInterval(interval)
+    } else {
+      setAudioLevel(0)
+    }
+  }, [callState])
 
   return (
     <AnimatePresence>
@@ -74,7 +67,7 @@ const CallUI = ({
                 <p className="text-sm text-gray-300">
                   {callState === 'incoming' && 'Incoming call...'}
                   {callState === 'outgoing' && 'Calling...'}
-                  {callState === 'connected' && formatDuration(callDuration)}
+                  {callState === 'connected' && callDuration}
                   {callState === 'ended' && 'Call ended'}
                 </p>
               </div>
@@ -82,13 +75,24 @@ const CallUI = ({
 
             {/* Audio indicators for connected calls */}
             {callState === 'connected' && (
-              <div className="flex space-x-2">
+              <div className="flex space-x-2 items-center">
                 {isMuted ? (
                   <MicOff size={18} className="text-red-400" />
                 ) : (
                   <Mic size={18} className="text-green-400" />
                 )}
-                <Volume2 size={18} className="text-blue-400 animate-pulse" />
+                <div className="flex h-4 space-x-0.5">
+                  {[0.2, 0.4, 0.6, 0.8, 1].map((level, i) => (
+                    <div 
+                      key={i}
+                      className={`w-1 rounded-sm ${audioLevel >= level ? 'bg-blue-400' : 'bg-gray-600'}`}
+                      style={{ 
+                        height: `${Math.max(4, level * 16)}px`,
+                        transition: 'height 0.1s ease-in-out'
+                      }}
+                    />
+                  ))}
+                </div>
               </div>
             )}
           </div>

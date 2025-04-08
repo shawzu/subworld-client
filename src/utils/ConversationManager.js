@@ -155,7 +155,7 @@ class ConversationManager {
    */
   _processCallSignals(messages) {
     // Skip if call service not available or already processing
-    if (typeof window === 'undefined' || !window.callService || this.isProcessingCallMessages) {
+    if (typeof window === 'undefined' || !window.voiceService || this.isProcessingCallMessages) {
       return;
     }
     
@@ -180,8 +180,8 @@ class ConversationManager {
             console.log('Processing call signal type:', signalData.type);
             
             // Process the signaling message
-            if (window.callService && typeof window.callService.processSignalingMessage === 'function') {
-              window.callService.processSignalingMessage(message.sender, signalData);
+            if (window.voiceService && typeof window.voiceService.processSignalingMessage === 'function') {
+              window.voiceService.processSignalingMessage(message.sender, signalData);
             } else {
               console.warn('Call service not available for processing signal');
             }
@@ -207,37 +207,41 @@ class ConversationManager {
     if (message.sender === this.currentUserKey) return;
     
     try {
-      // Check if this is a call start notification
-      if (typeof message.content === 'string' && message.content.includes('call_start')) {
-        console.log('Found call start notification');
+      // Check if this is a call signaling message
+      if (typeof message.content === 'string' && message.content.startsWith(this.callSignalPrefix)) {
+        console.log('Found call signal in _processMessage');
         
         try {
-          // Parse the call data
-          const callData = JSON.parse(message.content);
+          // Extract the signaling data
+          const signalString = message.content.substring(this.callSignalPrefix.length);
+          const signalData = JSON.parse(signalString);
           
-          if (typeof window !== 'undefined' && window.voiceService) {
-            window.voiceService.processCallSignal(message.sender, {
-              type: 'call_start',
-              callSessionId: message.id
-            });
+          // Check if this is a WebRTC signal
+          if (signalData.type === 'webrtc_signal') {
+            // Process WebRTC signal immediately
+            if (typeof window !== 'undefined' && window.voiceService) {
+              window.voiceService.processSignalingMessage(message.sender, signalData.data);
+            }
+          }
+          else if (signalData.type === 'call_start') {
+            // Legacy call start
+            if (typeof window !== 'undefined' && window.voiceService) {
+              window.voiceService.processCallSignal(message.sender, {
+                type: 'call_start',
+                callSessionId: message.id
+              });
+            }
+          }
+          else if (signalData.type === 'call_end') {
+            // Legacy call end
+            if (typeof window !== 'undefined' && window.voiceService) {
+              window.voiceService.processCallSignal(message.sender, {
+                type: 'call_end'
+              });
+            }
           }
         } catch (err) {
-          console.warn('Error parsing call notification:', err);
-        }
-      }
-      
-      // Check if this is a call end notification
-      if (typeof message.content === 'string' && message.content.includes('call_end')) {
-        console.log('Found call end notification');
-        
-        try {
-          if (typeof window !== 'undefined' && window.voiceService) {
-            window.voiceService.processCallSignal(message.sender, {
-              type: 'call_end'
-            });
-          }
-        } catch (err) {
-          console.warn('Error parsing call end notification:', err);
+          console.warn('Error parsing call signal:', err);
         }
       }
     } catch (error) {
@@ -720,7 +724,7 @@ async sendCallSignal(recipientPublicKey, signalData) {
       // Filter out the conversation
       const originalLength = this.conversations.length
       this.conversations = this.conversations.filter(c => c.contactPublicKey !== contactPublicKey)
-
+      
       // Check if a conversation was removed
       if (this.conversations.length < originalLength) {
         this._persistConversations()
