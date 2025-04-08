@@ -246,26 +246,26 @@ class ConversationManager {
   }
   
   /**
-   * Add this method to the class to send call signals
-   * @param {string} recipientKey - Recipient's public key
-   * @param {Object} signalData - Call signal data
-   * @returns {Promise<boolean>} - Success status
-   */
-  async sendCallSignal(recipientKey, signalData) {
-    try {
-      console.log("Sending call signal:", signalData.type);
-      // Add prefix to identify as call signal
-      const signalMessage = `${this.callSignalPrefix}${JSON.stringify(signalData)}`;
-      
-      // Send using regular message channel
-      await this.sendMessage(recipientKey, signalMessage);
-      console.log("Call signal sent successfully");
-      return true;
-    } catch (error) {
-      console.error('Failed to send call signal:', error);
-      return false;
-    }
+ * Send a call signal message
+ * @param {string} recipientPublicKey - Recipient's public key 
+ * @param {Object} signalData - Call signal data
+ * @returns {Promise<boolean>} - Success status
+ */
+async sendCallSignal(recipientPublicKey, signalData) {
+  try {
+    console.log("Sending call signal:", signalData.type);
+    // Add prefix to identify as call signal
+    const signalMessage = `CALL_SIGNAL:${JSON.stringify(signalData)}`;
+    
+    // Send using regular message channel
+    await this.sendMessage(recipientPublicKey, signalMessage);
+    console.log("Call signal sent successfully");
+    return true;
+  } catch (error) {
+    console.error('Failed to send call signal:', error);
+    return false;
   }
+}
 
   /**
    * Send a message in a conversation

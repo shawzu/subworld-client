@@ -948,43 +948,43 @@ class SubworldNetworkService {
  * @param {Object} body - Request body (for POST)
  * @returns {Promise<{success: boolean, data?: any, error?: string}>}
  */
-async makeApiRequest(endpoint, method = 'GET', body = null) {
-  try {
-    if (!this.currentNode) {
-      throw new Error('No node selected');
+  async makeApiRequest(endpoint, method = 'GET', body = null) {
+    try {
+      if (!this.currentNode) {
+        throw new Error('No node selected');
+      }
+
+      // Use proxy for voice endpoints
+      const nodeId = this.currentNode.id || 'bootstrap1';
+      const url = `${this.proxyBaseUrl}${nodeId}/${endpoint}`;
+
+      console.log(`Making API request to: ${url}`);
+
+      const headers = {
+        'Content-Type': 'application/json'
+      };
+
+      const options = {
+        method,
+        headers,
+        body: body ? JSON.stringify(body) : undefined
+      };
+
+      const response = await fetch(url, options);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`API request failed: ${response.status}`, errorText);
+        return { success: false, error: `Request failed with status ${response.status}` };
+      }
+
+      const data = await response.json();
+      return { success: true, data };
+    } catch (error) {
+      console.error('API request error:', error);
+      return { success: false, error: error.message };
     }
-
-    // Use proxy for voice endpoints
-    const nodeId = this.currentNode.id || 'bootstrap1';
-    const url = `${this.proxyBaseUrl}${nodeId}/${endpoint}`;
-
-    console.log(`Making API request to: ${url}`);
-
-    const headers = {
-      'Content-Type': 'application/json'
-    };
-
-    const options = {
-      method,
-      headers,
-      body: body ? JSON.stringify(body) : undefined
-    };
-
-    const response = await fetch(url, options);
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error(`API request failed: ${response.status}`, errorText);
-      return { success: false, error: `Request failed with status ${response.status}` };
-    }
-
-    const data = await response.json();
-    return { success: true, data };
-  } catch (error) {
-    console.error('API request error:', error);
-    return { success: false, error: error.message };
   }
-}
 
 
   /**

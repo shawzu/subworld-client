@@ -11,10 +11,26 @@ export default function CallButton({
   const [isHovered, setIsHovered] = useState(false)
   
   const handleClick = () => {
+    console.log('Call button clicked for contact:', contactPublicKey);
+    
     if (typeof window !== 'undefined' && window.voiceService) {
-      window.voiceService.initiateCall(contactPublicKey);
+      console.log('Using window.voiceService to initiate call');
+      window.voiceService.initiateCall(contactPublicKey)
+        .then(result => {
+          console.log('Call initiation result:', result);
+        })
+        .catch(err => {
+          console.error('Call initiation error:', err);
+        });
     } else if (voiceService) {
-      voiceService.initiateCall(contactPublicKey);
+      console.log('Using imported voiceService to initiate call');
+      voiceService.initiateCall(contactPublicKey)
+        .then(result => {
+          console.log('Call initiation result:', result);
+        })
+        .catch(err => {
+          console.error('Call initiation error:', err);
+        });
     } else {
       console.error('Voice service not available');
       alert('Call service is not available. Please try again later.');
