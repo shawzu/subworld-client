@@ -207,27 +207,37 @@ class ConversationManager {
     if (message.sender === this.currentUserKey) return;
     
     try {
-      // Check if this is a call signaling message
-      if (typeof message.content === 'string' && message.content.startsWith(this.callSignalPrefix)) {
-        console.log('Processing incoming call signal message:', message.id);
+      // Check if this is a call start notification
+      if (typeof message.content === 'string' && message.content.includes('call_start')) {
+        console.log('Found call start notification');
         
-        // Extract the signaling data
         try {
-          const signalString = message.content.substring(this.callSignalPrefix.length);
-          const signalData = JSON.parse(signalString);
+          // Parse the call data
+          const callData = JSON.parse(message.content);
           
-          console.log('Call signal type:', signalData.type);
-          
-          // Process the signal
-          if (typeof window !== 'undefined' && window.callService) {
-            window.callService.processSignalingMessage(message.sender, signalData);
-          } else if (this.callService) {
-            this.callService.processSignalingMessage(message.sender, signalData);
-          } else {
-            console.warn('Call service not available for real-time signal processing');
+          if (typeof window !== 'undefined' && window.voiceService) {
+            window.voiceService.processCallSignal(message.sender, {
+              type: 'call_start',
+              callSessionId: message.id
+            });
           }
         } catch (err) {
-          console.warn('Error parsing call signal in message processor:', err);
+          console.warn('Error parsing call notification:', err);
+        }
+      }
+      
+      // Check if this is a call end notification
+      if (typeof message.content === 'string' && message.content.includes('call_end')) {
+        console.log('Found call end notification');
+        
+        try {
+          if (typeof window !== 'undefined' && window.voiceService) {
+            window.voiceService.processCallSignal(message.sender, {
+              type: 'call_end'
+            });
+          }
+        } catch (err) {
+          console.warn('Error parsing call end notification:', err);
         }
       }
     } catch (error) {

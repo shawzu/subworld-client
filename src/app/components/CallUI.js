@@ -8,22 +8,18 @@ import {
   MicOff,
   Volume2,
   VolumeX,
-  X,
-  CheckCircle2
+  X
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 
 const CallUI = ({
-  callState, 
-  contactName, 
-  onAccept, 
-  onDecline, 
-  onHangUp, 
-  onToggleMute, 
-  onForceConnected, 
-  isMuted,
-  localAudioRef,
-  remoteAudioRef
+  callState,
+  contactName,
+  onAccept,
+  onDecline,
+  onHangUp,
+  onToggleMute,
+  isMuted
 }) => {
   const [callDuration, setCallDuration] = useState(0)
   const [durationTimer, setDurationTimer] = useState(null)
@@ -68,10 +64,6 @@ const CallUI = ({
           exit="exit"
           className="fixed inset-x-0 bottom-20 md:bottom-6 mx-auto max-w-md bg-gray-800 rounded-lg shadow-lg border border-gray-700 p-4 z-50"
         >
-          {/* Hidden audio elements */}
-          <audio ref={localAudioRef} muted className="hidden" />
-          <audio ref={remoteAudioRef} autoPlay className="hidden" />
-
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center">
               <div className="w-10 h-10 rounded-full bg-blue-500 flex items-center justify-center mr-3">
@@ -172,27 +164,6 @@ const CallUI = ({
                 <div className="w-12 h-12 rounded-full bg-blue-500/60 absolute"></div>
               </div>
             </div>
-          )}
-
-          {process.env.NODE_ENV !== 'production' && callState === 'outgoing' && (
-            <button
-              onClick={() => {
-                console.log('Manual force to connected state');
-                // Only call if the function exists
-                if (typeof onForceConnected === 'function') {
-                  onForceConnected();
-                } else {
-                  console.warn('onForceConnected not provided to CallUI component');
-                }
-              }}
-              className="w-8 h-8 ml-2 rounded-full bg-yellow-600 flex items-center justify-center text-white hover:bg-yellow-700 transition-colors"
-              title="Force connected state (debug)"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z" />
-                <path d="m9 12 2 2 4-4" />
-              </svg>
-            </button>
           )}
         </motion.div>
       )}

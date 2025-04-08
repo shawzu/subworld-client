@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import callService from '../../utils/CallService'
+import voiceService from '../../utils/VoiceService'
 import contactStore from '../../utils/ContactStore'
 import CallUI from './CallUI'
 
@@ -15,19 +15,15 @@ const CallHandler = () => {
   const [contactName, setContactName] = useState('Unknown Contact')
   const [isMuted, setIsMuted] = useState(false)
 
-  // Audio refs
-  const localAudioRef = useRef(null)
-  const remoteAudioRef = useRef(null)
-
   // Set up event listeners when component mounts
   useEffect(() => {
-    // Initialize call service
-    callService.initialize().catch(error => {
-      console.error('Failed to initialize call service:', error)
+    // Initialize voice service
+    voiceService.initialize().catch(error => {
+      console.error('Failed to initialize voice service:', error)
     })
 
-    // Set up call event listener with enhanced state handling
-    const removeListener = callService.addCallListener((event, data) => {
+    // Set up call event listener
+    const removeListener = voiceService.addCallListener((event, data) => {
       console.log('CallHandler received event:', event, data);
 
       switch (event) {
@@ -55,31 +51,6 @@ const CallHandler = () => {
         case 'mute_changed':
           setIsMuted(data.isMuted)
           break
-
-        case 'remote_stream_received':
-          console.log('Remote stream received, applying to audio element');
-          if (remoteAudioRef.current && data.stream) {
-            remoteAudioRef.current.srcObject = data.stream
-            // Ensure it plays with autoplay issues on some browsers
-            remoteAudioRef.current.play().catch(err => {
-              console.warn('Error playing remote audio:', err)
-            })
-          }
-          break
-
-        case 'call_rejected':
-          // Handle rejected calls
-          console.log('Call rejected, reason:', data.reason);
-          break
-
-        case 'connection_state_changed':
-          console.log('WebRTC connection state changed:', data.state);
-          // If connected, make sure UI shows connected state
-          if (data.state === 'connected' && callState !== 'connected') {
-            console.log('WebRTC reports connected, updating UI state');
-            setCallState('connected');
-          }
-          break;
       }
     })
 
@@ -88,48 +59,11 @@ const CallHandler = () => {
       removeListener()
 
       // End any active call
-      if (callService.isInCall()) {
-        callService.endCall()
+      if (voiceService.isInCall()) {
+        voiceService.endCall()
       }
     }
-  }, [])
-
-  useEffect(() => {
-    // This effect handles call state inconsistencies
-    if (!callState) return;
-
-    // If call is in outgoing state for more than 15 seconds, check WebRTC state
-    if (callState === 'outgoing') {
-      const checkTimeout = setTimeout(() => {
-        console.log('Checking for call state inconsistencies...');
-
-        if (!window.callService) return;
-
-        // Check actual WebRTC connection state
-        const connection = window.callService.webRTCService?.peerConnection;
-        if (connection) {
-          // Log current states for debugging
-          console.log('CallUI states check:');
-          console.log('- UI state:', callState);
-          console.log('- WebRTC connection state:', connection.connectionState);
-          console.log('- WebRTC ICE state:', connection.iceConnectionState);
-
-          // If actual connection is established but UI doesn't show it
-          if (
-            connection.connectionState === 'connected' ||
-            connection.iceConnectionState === 'connected' ||
-            connection.iceConnectionState === 'completed'
-          ) {
-            console.log('⚠️ UI STATE MISMATCH: Forcing UI update to connected state');
-            // Force UI to show connected state
-            setCallState('connected');
-          }
-        }
-      }, 15000); // Check after 15 seconds of outgoing state
-
-      return () => clearTimeout(checkTimeout);
-    }
-  }, [callState]);
+  }, [callState])
 
   // Update contact name whenever contact key changes
   useEffect(() => {
@@ -143,32 +77,20 @@ const CallHandler = () => {
 
   // Handlers
   const handleAcceptCall = () => {
-    callService.answerCall()
+    voiceService.answerCall()
   }
 
   const handleDeclineCall = () => {
-    callService.rejectCall()
+    voiceService.rejectCall()
   }
 
   const handleHangUp = () => {
-    callService.endCall()
+    voiceService.endCall()
   }
 
   const handleToggleMute = () => {
-    setIsMuted(callService.toggleMute())
+    setIsMuted(voiceService.toggleMute())
   }
-
-  const handleForceConnected = () => {
-    if (callState === 'outgoing') {
-      console.log('Manually forcing call state to connected');
-      setCallState('connected');
-
-      // Also try to force the call service to update its state
-      if (window.callService && window.callService.forceStateSync) {
-        window.callService.forceStateSync();
-      }
-    }
-  };
 
   // Don't render anything if no call
   if (!callState) return null
@@ -181,10 +103,7 @@ const CallHandler = () => {
       onDecline={handleDeclineCall}
       onHangUp={handleHangUp}
       onToggleMute={handleToggleMute}
-      onForceConnected={handleForceConnected}
       isMuted={isMuted}
-      localAudioRef={localAudioRef}
-      remoteAudioRef={remoteAudioRef}
     />
   )
 }

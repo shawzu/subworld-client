@@ -1,17 +1,24 @@
 'use client'
 
 import { useState } from 'react'
-import { Phone, PhoneOff, MicOff, Mic } from 'lucide-react'
+import { Phone } from 'lucide-react'
+import voiceService from '../../utils/VoiceService'
 
 export default function CallButton({ 
   contactPublicKey, 
-  contactName, 
-  onInitiateCall 
+  contactName
 }) {
   const [isHovered, setIsHovered] = useState(false)
   
   const handleClick = () => {
-    onInitiateCall(contactPublicKey)
+    if (typeof window !== 'undefined' && window.voiceService) {
+      window.voiceService.initiateCall(contactPublicKey);
+    } else if (voiceService) {
+      voiceService.initiateCall(contactPublicKey);
+    } else {
+      console.error('Voice service not available');
+      alert('Call service is not available. Please try again later.');
+    }
   }
 
   return (

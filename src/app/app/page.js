@@ -50,73 +50,60 @@ export default function App() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
   }
 
-  if (typeof window !== 'undefined') {
-    import('../../utils/CallService').then(module => {
-      // Store the call service globally
-      window.callService = module.default;
-      console.log('Call service loaded globally');
-  
-      // Initialize call service
-      window.callService.initialize().catch(err => {
-        console.warn('Failed to initialize call service:', err);
-      });
-    }).catch(err => {
-      console.error('Failed to load call service:', err);
-    });
-  }
-
+ 
   useEffect(() => {
     // Share services with each other
     const setupServices = () => {
       if (typeof window !== 'undefined') {
-        // Make conversationManager globally available
-        if (conversationManager && !window.conversationManager) {
-          window.conversationManager = conversationManager;
-          console.log("Conversation manager registered globally");
-        }
-        
-        // Wait until both services are loaded
-        if (window.callService && window.conversationManager) {
-          // Connect the services in both directions
-          window.callService.conversationManager = window.conversationManager;
-          window.conversationManager.callService = window.callService;
-          console.log("Connected call service with conversation manager (bidirectional)");
-        } else {
-          // Try again in a moment
-          setTimeout(setupServices, 1000);
-        }
+        // Import and initialize voice service
+        import('../../utils/VoiceService').then(module => {
+          window.voiceService = module.default;
+          console.log('Voice service loaded globally');
+          
+          // Initialize voice service
+          window.voiceService.initialize().catch(err => {
+            console.warn('Failed to initialize voice service:', err);
+          });
+          
+          // Connect voice service with conversation manager if available
+          if (window.conversationManager) {
+            console.log('Connecting voice service with conversation manager');
+          }
+        }).catch(err => {
+          console.error('Failed to load voice service:', err);
+        });
       }
     };
-    
+
     // Start the service connection process
     setupServices();
   }, []);
-  
+
 
   // Add this function to your component
   const handleInitiateCall = (contactPublicKey) => {
     console.log('Initiating call to:', contactPublicKey);
-    
-    if (!window.callService) {
-      console.error('Call service not available');
-      alert('Call service not available. Please try again later.');
+
+    if (!window.voiceService) {
+      console.error('Voice service not available');
+      alert('Voice service not available. Please try again later.');
       return;
     }
-  
+
     try {
-      // Ensure the call service is initialized
-      if (!window.callService.isInitialized) {
-        console.log('Call service not yet initialized, initializing now...');
-        window.callService.initialize().then(() => {
+      // Ensure the voice service is initialized
+      if (!window.voiceService.initialized) {
+        console.log('Voice service not yet initialized, initializing now...');
+        window.voiceService.initialize().then(() => {
           // After initialization, try to initiate the call
-          window.callService.initiateCall(contactPublicKey).catch(error => {
+          window.voiceService.initiateCall(contactPublicKey).catch(error => {
             console.error('Failed to initiate call:', error);
             alert('Could not start the call. Please try again.');
           });
         });
       } else {
-        // Call service is already initialized, proceed with call
-        window.callService.initiateCall(contactPublicKey).catch(error => {
+        // Voice service is already initialized, proceed with call
+        window.voiceService.initiateCall(contactPublicKey).catch(error => {
           console.error('Failed to initiate call:', error);
           alert('Could not start the call. Please try again.');
         });
