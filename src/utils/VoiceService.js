@@ -35,6 +35,23 @@ class VoiceService {
     
     // Set default server address (proxy)
     this.serverUrl = 'https://proxy.inhouses.xyz';
+    
+    // PeerJS configuration
+    this.peerConfig = {
+      // Set debug level (0 = errors only, 1 = errors & warnings, 2 = all logs)
+      debug: 1,
+      // ICE server configuration
+      config: {
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' },
+          { urls: 'stun:stun2.l.google.com:19302' }
+        ]
+      }
+    };
+    
+    // Track call direction
+    this.isOutgoingCall = false;
   }
   
   /**
@@ -75,8 +92,8 @@ class VoiceService {
         // Register with the signaling server
         this.socket.emit('register', { publicKey: this.userPublicKey });
         
-        // Initialize PeerJS (set ID later when needed)
-        this.peer = new Peer();
+        // Initialize PeerJS (but don't connect yet - we'll do this per call)
+        this.peer = null; // Will be created on demand per call
         
         this.initialized = true;
         
@@ -110,13 +127,15 @@ class VoiceService {
       this.log('Incoming call:', data);
       this.callId = data.callId;
       this.remoteUserKey = data.caller;
+      this.isOutgoingCall = false;
       
       // Update call state
       this.callState = 'ringing';
       this._notifyListeners('call_state_changed', {
         state: 'ringing',
         contact: data.caller,
-        callId: data.callId
+        callId: data.callId,
+        outgoing: false
       });
     });
     
@@ -128,7 +147,8 @@ class VoiceService {
         this.callState = 'ringing';
         this._notifyListeners('call_state_changed', {
           state: 'ringing',
-          contact: this.remoteUserKey
+          contact: this.remoteUserKey,
+          outgoing: this.isOutgoingCall
         });
       } else if (data.status === 'failed') {
         this.callState = 'ended';
@@ -248,8 +268,9 @@ class VoiceService {
       
       this.log('Initiating call to:', contactPublicKey);
       this.remoteUserKey = contactPublicKey;
+      this.isOutgoingCall = true;
       
-      // Request audio permissions
+      // Request audio permissions first, before any other operations
       this.log('Requesting microphone access');
       try {
         this.localStream = await navigator.mediaDevices.getUserMedia({ 
@@ -350,7 +371,8 @@ class VoiceService {
         contact: this.remoteUserKey
       });
       
-      // Wait for the caller to initiate the WebRTC connection
+      // Initiate WebRTC connection from the answerer side as well
+      this._initiateWebRTCConnection();
       
       return true;
     } catch (error) {
@@ -397,43 +419,89 @@ class VoiceService {
    * Initiate WebRTC connection
    */
   _initiateWebRTCConnection() {
-    if (!this.peer || !this.localStream) {
-      this.log('Peer or local stream not available');
+    if (!this.localStream) {
+      this.log('Local stream not available, cannot initiate WebRTC');
+      this.endCall();
       return;
     }
     
     this.log('Initiating WebRTC connection with:', this.remoteUserKey);
     
-    // Create unique peer ID based on call ID
+    // Always create a fresh Peer instance
+    if (this.peer) {
+      try {
+        this.peer.destroy();
+      } catch (e) {
+        console.warn('Error destroying existing peer:', e);
+      }
+    }
+    
+    // Create unique peer ID based on call ID and our key
     const myPeerId = `${this.userPublicKey}-${this.callId}`;
     this.log('My peer ID:', myPeerId);
     
-    this.peer = new Peer(myPeerId);
+    // Initialize PeerJS with configuration
+    this.peer = new Peer(myPeerId, this.peerConfig);
     
     this.peer.on('open', (id) => {
       this.log('PeerJS connection opened with ID:', id);
       
-      // Connect to the remote peer
-      const remotePeerId = `${this.remoteUserKey}-${this.callId}`;
-      this.log('Calling remote peer:', remotePeerId);
-      
-      // Call the remote peer
-      this.peerConnection = this.peer.call(remotePeerId, this.localStream);
-      
-      if (!this.peerConnection) {
-        this.log('Failed to create peer connection');
-        this.endCall();
-        return;
+      // Handle based on call direction
+      if (this.isOutgoingCall) {
+        // If this is an outgoing call, initiate the connection to the remote peer
+        const remotePeerId = `${this.remoteUserKey}-${this.callId}`;
+        this.log('Calling remote peer:', remotePeerId);
+        
+        // Add a small delay to ensure remote peer is ready
+        setTimeout(() => {
+          try {
+            // Call the remote peer
+            this.peerConnection = this.peer.call(remotePeerId, this.localStream);
+            
+            if (!this.peerConnection) {
+              this.log('Failed to create peer connection');
+              this.endCall();
+              return;
+            }
+            
+            // Handle the connection
+            this._handlePeerConnection();
+          } catch (err) {
+            console.error('Error calling remote peer:', err);
+            this.endCall();
+          }
+        }, 1000); // 1 second delay for remote peer setup
       }
-      
-      // Handle the connection
-      this._handlePeerConnection();
     });
     
     this.peer.on('error', (err) => {
       console.error('PeerJS error:', err);
       
-      // If call is still in progress, end it
+      // If it's a "peer-unavailable" error, try again after a short delay
+      if (err.type === 'peer-unavailable' && this.callState === 'connecting') {
+        this.log('Remote peer not available yet, retrying...');
+        
+        // Try again after a delay if still in connecting state
+        setTimeout(() => {
+          if (this.callState === 'connecting' && this.isOutgoingCall) {
+            this.log('Retrying connection to remote peer');
+            const remotePeerId = `${this.remoteUserKey}-${this.callId}`;
+            
+            try {
+              this.peerConnection = this.peer.call(remotePeerId, this.localStream);
+              if (this.peerConnection) {
+                this._handlePeerConnection();
+              }
+            } catch (retryErr) {
+              console.error('Error in retry connection:', retryErr);
+            }
+          }
+        }, 2000); // 2 second retry delay
+        
+        return;
+      }
+      
+      // For other errors, end the call if still active
       if (this.callState !== 'ended' && this.callState !== null) {
         this.callState = 'ended';
         this._notifyListeners('call_state_changed', {
@@ -447,7 +515,7 @@ class VoiceService {
       }
     });
     
-    // Listen for incoming calls as well (in case the other side calls us first)
+    // Listen for incoming calls (important for the answerer)
     this.peer.on('call', (incomingCall) => {
       this.log('Received incoming PeerJS call');
       
@@ -466,7 +534,10 @@ class VoiceService {
    * Handle PeerJS connection events
    */
   _handlePeerConnection() {
-    if (!this.peerConnection) return;
+    if (!this.peerConnection) {
+      this.log('No peer connection to handle');
+      return;
+    }
     
     // Handle remote stream
     this.peerConnection.on('stream', (stream) => {
@@ -613,12 +684,70 @@ class VoiceService {
     this.callId = null;
     const previousRemoteUser = this.remoteUserKey;
     this.remoteUserKey = null;
+    this.isOutgoingCall = false;
     
     // Notify listeners of final state
     this._notifyListeners('call_state_changed', { 
       state: null, 
       contact: previousRemoteUser
     });
+  }
+  
+  /**
+   * Join a call with an existing call ID
+   * @param {string} callId - The call ID to join
+   * @param {string} contactPublicKey - The contact's public key
+   */
+  async joinCall(callId, contactPublicKey) {
+    try {
+      // Prevent joining if already in a call
+      if (this.callState) {
+        console.warn('Already in a call, cannot join another');
+        return false;
+      }
+      
+      this.log('Joining call:', callId, 'with contact:', contactPublicKey);
+      
+      // Set call parameters
+      this.callId = callId;
+      this.remoteUserKey = contactPublicKey;
+      this.isOutgoingCall = true; // We're initiating the connection
+      
+      // Request audio permissions
+      this.log('Requesting microphone access for join');
+      try {
+        this.localStream = await navigator.mediaDevices.getUserMedia({ 
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
+          }, 
+          video: false 
+        });
+        
+        this.log('Microphone access granted for join, tracks:', this.localStream.getTracks().length);
+      } catch (mediaError) {
+        console.error('Failed to get audio stream for join:', mediaError);
+        throw new Error('Microphone access denied. Please allow microphone access to make calls.');
+      }
+      
+      // Update call state
+      this.callState = 'connecting';
+      this._notifyListeners('call_state_changed', { 
+        state: 'connecting',
+        contact: contactPublicKey,
+        outgoing: true
+      });
+      
+      // Initiate WebRTC connection
+      this._initiateWebRTCConnection();
+      
+      return true;
+    } catch (error) {
+      console.error('Error joining call:', error);
+      this.endCall();
+      throw error;
+    }
   }
   
   /**
@@ -671,6 +800,7 @@ class VoiceService {
       peerConnectionActive: !!this.peerConnection,
       userPublicKey: this.userPublicKey,
       remoteUserKey: this.remoteUserKey,
+      isOutgoingCall: this.isOutgoingCall,
       browserInfo: {
         userAgent: navigator.userAgent,
         webRTCSupport: typeof RTCPeerConnection !== 'undefined',
