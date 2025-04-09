@@ -36,6 +36,14 @@ class VoiceService {
     // Set default server address (proxy)
     this.serverUrl = 'https://proxy.inhouses.xyz';
     
+    // Connection attempts and tracking
+    this.currentConnectionAttempt = 0;
+    this.maxConnectionAttempts = 8; // Increased from 5 to 8 for more retries
+    
+    // Detect network type
+    this.networkType = 'unknown';
+    this.isMobileNetwork = false;
+    
     // PeerJS configuration
     this.peerConfig = {
       // Set debug level (0 = errors only, 1 = errors & warnings, 2 = all logs)
@@ -43,12 +51,14 @@ class VoiceService {
       // ICE server configuration with TURN servers
       config: {
         iceServers: [
-          // Existing STUN servers
+          // STUN servers
           { urls: 'stun:stun.l.google.com:19302' },
           { urls: 'stun:stun1.l.google.com:19302' },
           { urls: 'stun:stun2.l.google.com:19302' },
+          { urls: 'stun:stun3.l.google.com:19302' },
+          { urls: 'stun:stun4.l.google.com:19302' },
           
-          // Add free TURN servers (you should replace these with your own in production)
+          // TURN servers - using multiple TURN servers with different transport options
           {
             urls: 'turn:openrelay.metered.ca:80',
             username: 'openrelayproject',
@@ -63,14 +73,33 @@ class VoiceService {
             urls: 'turn:openrelay.metered.ca:443?transport=tcp',
             username: 'openrelayproject',
             credential: 'openrelayproject'
+          },
+          // Additional backup TURN servers
+          {
+            urls: 'turn:global.turn.twilio.com:3478?transport=udp',
+            username: 'f4b4035eaa76f4a55de5f4351567653ee4ff6fa97b50b6b334fcc1be9c27212d',
+            credential: 'w1WqTH/+zZXcYTtS235xQc/1UH/lW60SYl1HjZ4NEkQ='
+          },
+          {
+            urls: 'turn:global.turn.twilio.com:3478?transport=tcp',
+            username: 'f4b4035eaa76f4a55de5f4351567653ee4ff6fa97b50b6b334fcc1be9c27212d',
+            credential: 'w1WqTH/+zZXcYTtS235xQc/1UH/lW60SYl1HjZ4NEkQ='
           }
         ],
-        iceCandidatePoolSize: 10
+        iceCandidatePoolSize: 10,
+        bundlePolicy: 'max-bundle',
+        rtcpMuxPolicy: 'require',
+        // These help with mobile connections
+        iceTransportPolicy: 'all', // Try with 'relay' if still having issues
+        sdpSemantics: 'unified-plan'
       }
     };
     
     // Track call direction
     this.isOutgoingCall = false;
+    
+    // Timeouts for cleanup
+    this.connectionTimeouts = [];
   }
   
   /**
@@ -102,8 +131,15 @@ class VoiceService {
         this.userPublicKey = publicKeyDisplay;
         this.log(`User public key: ${this.userPublicKey}`);
         
+        // Detect network type
+        this._detectNetworkType();
+        
         // Initialize Socket.io
-        this.socket = io(this.serverUrl);
+        this.socket = io(this.serverUrl, {
+          reconnectionAttempts: 5,
+          timeout: 10000,
+          transports: ['websocket', 'polling']
+        });
         
         // Set up socket event listeners
         this._setupSocketListeners();
@@ -129,6 +165,40 @@ class VoiceService {
     } catch (error) {
       console.error('Failed to initialize voice service:', error);
       return false;
+    }
+  }
+  
+  /**
+   * Detect and monitor network type
+   */
+  _detectNetworkType() {
+    try {
+      const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+      
+      if (connection) {
+        // Get initial network type
+        this.networkType = connection.type || connection.effectiveType || 'unknown';
+        this.isMobileNetwork = this.networkType === 'cellular';
+        
+        this.log(`Detected network type: ${this.networkType}, Mobile: ${this.isMobileNetwork}`);
+        
+        // Listen for network changes
+        connection.addEventListener('change', () => {
+          this.networkType = connection.type || connection.effectiveType || 'unknown';
+          this.isMobileNetwork = this.networkType === 'cellular';
+          this.log(`Network changed: ${this.networkType}, Mobile: ${this.isMobileNetwork}`);
+        });
+      } else {
+        // Fallback detection based on user agent (less reliable)
+        const userAgent = navigator.userAgent.toLowerCase();
+        this.isMobileNetwork = /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini/i.test(userAgent);
+        this.networkType = this.isMobileNetwork ? 'cellular?' : 'unknown';
+        this.log(`Network detection fallback: ${this.networkType}, Mobile: ${this.isMobileNetwork}`);
+      }
+    } catch (error) {
+      console.error('Error detecting network type:', error);
+      this.networkType = 'unknown';
+      this.isMobileNetwork = false;
     }
   }
   
@@ -246,6 +316,14 @@ class VoiceService {
         this._cleanupCall();
       }
     });
+    
+    // Handle reconnection
+    this.socket.on('reconnect', (attemptNumber) => {
+      this.log(`Reconnected to signaling server after ${attemptNumber} attempts`);
+      
+      // Re-register with server
+      this.socket.emit('register', { publicKey: this.userPublicKey });
+    });
   }
   
   /**
@@ -289,6 +367,9 @@ class VoiceService {
       this.remoteUserKey = contactPublicKey;
       this.isOutgoingCall = true;
       
+      // Re-check network type before starting call
+      this._detectNetworkType();
+      
       // Request audio permissions first, before any other operations
       this.log('Requesting microphone access');
       try {
@@ -321,6 +402,9 @@ class VoiceService {
       
       // Start tracking connection time
       this.connectionStartTime = Date.now();
+      
+      // Reset connection attempt counter
+      this.currentConnectionAttempt = 0;
       
       // Send call request to signaling server
       this.socket.emit('call_request', {
@@ -390,6 +474,9 @@ class VoiceService {
         contact: this.remoteUserKey
       });
       
+      // Reset connection attempt counter
+      this.currentConnectionAttempt = 0;
+      
       // Initiate WebRTC connection from the answerer side as well
       this._initiateWebRTCConnection();
       
@@ -438,6 +525,230 @@ class VoiceService {
     return this._enhancedWebRTCConnection();
   }
 
+  /**
+   * Enhanced WebRTC connection with retry logic and mobile optimization
+   * Improved to handle mobile data connections better
+   */
+  _enhancedWebRTCConnection() {
+    if (!this.localStream) {
+      this.log('Local stream not available, cannot initiate WebRTC');
+      this.endCall();
+      return;
+    }
+    
+    this.log('Initiating enhanced WebRTC connection with:', this.remoteUserKey);
+    this.log(`Network type: ${this.networkType}, Mobile: ${this.isMobileNetwork}`);
+    
+    // Clear all previous timeouts
+    this._clearAllTimeouts();
+    
+    // Always create a fresh Peer instance
+    if (this.peer) {
+      try {
+        this.peer.destroy();
+      } catch (e) {
+        console.warn('Error destroying existing peer:', e);
+      }
+    }
+    
+    // Create unique peer ID based on call ID and our key
+    const myPeerId = `${this.userPublicKey}-${this.callId}`;
+    this.log('My peer ID:', myPeerId);
+    
+    // Adjust PeerJS config based on network type
+    const peerConfig = {...this.peerConfig};
+    
+    // For mobile networks, prioritize TURN servers by using 'relay' policy
+    if (this.isMobileNetwork) {
+      this.log('Using mobile-optimized config with relay servers prioritized');
+      peerConfig.config.iceTransportPolicy = 'relay';
+    }
+    
+    // Initialize PeerJS with configuration
+    this.peer = new Peer(myPeerId, peerConfig);
+    
+    // Track current connection attempt
+    this.currentConnectionAttempt = 0;
+    
+    // Function to create a timeout with automatic cleanup
+    const createTimeout = (callback, timeout) => {
+      // Use longer timeout for mobile connections
+      const adjustedTimeout = this.isMobileNetwork ? timeout * 2 : timeout;
+      
+      const timeoutId = setTimeout(() => {
+        // Remove from tracked timeouts
+        this.connectionTimeouts = this.connectionTimeouts.filter(id => id !== timeoutId);
+        // Execute callback
+        callback();
+      }, adjustedTimeout);
+      
+      // Track timeout for cleanup
+      this.connectionTimeouts.push(timeoutId);
+      
+      return timeoutId;
+    };
+    
+    // Connection attempt function with improved retry logic
+    const attemptConnection = () => {
+      this.currentConnectionAttempt++;
+      
+      // Update the UI with connection attempt
+      this._notifyListeners('connection_attempt', {
+        attempt: this.currentConnectionAttempt
+      });
+      
+      this.log(`Connection attempt ${this.currentConnectionAttempt} of ${this.maxConnectionAttempts}`);
+      
+      if (this.currentConnectionAttempt > this.maxConnectionAttempts) {
+        this.log('Maximum connection attempts reached, giving up');
+        this.callState = 'ended';
+        this._notifyListeners('call_state_changed', {
+          state: 'ended',
+          contact: this.remoteUserKey,
+          reason: 'connection_failed'
+        });
+        
+        this._cleanupCall();
+        return;
+      }
+      
+      try {
+        const remotePeerId = `${this.remoteUserKey}-${this.callId}`;
+        this.log('Calling remote peer:', remotePeerId);
+        
+        // Call the remote peer with enhanced options
+        const callOptions = {
+          metadata: {
+            callId: this.callId,
+            attempt: this.currentConnectionAttempt
+          },
+          // Lower values improve compatibility with mobile
+          sdpTransform: (sdp) => {
+            // Force low bitrate for audio to improve reliability on mobile
+            return sdp.replace('useinbandfec=1', 'useinbandfec=1; stereo=0; maxaveragebitrate=24000');
+          }
+        };
+        
+        // Make the call with audio stream and options
+        this.peerConnection = this.peer.call(remotePeerId, this.localStream, callOptions);
+        
+        if (!this.peerConnection) {
+          this.log('Failed to create peer connection');
+          
+          // Retry after delay
+          createTimeout(() => {
+            attemptConnection();
+          }, 2000 + (this.currentConnectionAttempt * 500)); // Increase delay with each attempt
+          
+          return;
+        }
+        
+        // Handle the connection
+        this._handlePeerConnection();
+        
+        // Set timeout for this attempt - longer for mobile
+        const timeoutDuration = this.isMobileNetwork ? 
+          8000 + (this.currentConnectionAttempt * 1000) : // longer for mobile
+          5000 + (this.currentConnectionAttempt * 500);   // shorter for wifi
+          
+        createTimeout(() => {
+          // If we're still connecting, try again
+          if (this.callState === 'connecting') {
+            attemptConnection();
+          }
+        }, timeoutDuration);
+      } catch (err) {
+        console.error('Error calling remote peer:', err);
+        
+        // Retry after delay - progressive backoff
+        createTimeout(() => {
+          attemptConnection();
+        }, 2000 + (this.currentConnectionAttempt * 1000));
+      }
+    };
+    
+    this.peer.on('open', (id) => {
+      this.log('PeerJS connection opened with ID:', id);
+      
+      // Handle based on call direction
+      if (this.isOutgoingCall) {
+        // If this is an outgoing call, initiate connection with retry logic
+        attemptConnection();
+      }
+    });
+    
+    this.peer.on('error', (err) => {
+      this.log('PeerJS error:', err.type);
+      
+      if (err.type === 'peer-unavailable' && this.callState === 'connecting') {
+        // For peer unavailable, if we're on mobile, wait longer between retries
+        const retryDelay = this.isMobileNetwork ? 
+          3000 + (this.currentConnectionAttempt * 1000) : 
+          2000 + (this.currentConnectionAttempt * 500);
+          
+        createTimeout(() => {
+          if (this.callState === 'connecting') {
+            attemptConnection();
+          }
+        }, retryDelay);
+        return;
+      }
+      
+      // For network errors, try to reconnect more aggressively
+      if (err.type === 'network' && this.callState === 'connecting') {
+        this.log('Network error, attempting quick reconnect');
+        createTimeout(() => {
+          if (this.callState === 'connecting') {
+            attemptConnection();
+          }
+        }, 1000);
+        return;
+      }
+      
+      // For server or socket errors, maybe the server is overloaded
+      if ((err.type === 'server-error' || err.type === 'socket-error') && 
+          this.callState === 'connecting') {
+        createTimeout(() => {
+          if (this.callState === 'connecting') {
+            attemptConnection();
+          }
+        }, 3000);
+        return;
+      }
+      
+      // For other errors, end the call if still active and we've exhausted retries
+      if (this.currentConnectionAttempt >= this.maxConnectionAttempts && 
+          this.callState !== 'ended' && 
+          this.callState !== null) {
+        this.callState = 'ended';
+        this._notifyListeners('call_state_changed', {
+          state: 'ended',
+          contact: this.remoteUserKey,
+          reason: 'connection_error'
+        });
+        
+        // Clean up
+        this._cleanupCall();
+      }
+    });
+    
+    // Listen for incoming calls (important for the answerer)
+    this.peer.on('call', (incomingCall) => {
+      this.log('Received incoming PeerJS call');
+      
+      // Clear any existing timeouts
+      this._clearAllTimeouts();
+      
+      // Answer the call with our local stream
+      incomingCall.answer(this.localStream);
+      
+      // Update our connection reference
+      this.peerConnection = incomingCall;
+      
+      // Handle the connection
+      this._handlePeerConnection();
+    });
+  }
   
   /**
    * Handle PeerJS connection events
@@ -450,7 +761,7 @@ class VoiceService {
     
     // Handle remote stream
     this.peerConnection.on('stream', (stream) => {
-      this.log('Received remote stream');
+      this.log('Received remote stream with tracks:', stream.getTracks().length);
       this.remoteStream = stream;
       
       // Notify listeners of remote stream
@@ -462,6 +773,9 @@ class VoiceService {
         state: 'connected',
         contact: this.remoteUserKey
       });
+      
+      // Clear all connection attempt timeouts
+      this._clearAllTimeouts();
     });
     
     // Handle call closing
@@ -497,6 +811,39 @@ class VoiceService {
         this._cleanupCall();
       }
     });
+    
+    // Listen for ICE connection state changes
+    if (this.peerConnection.peerConnection) {
+      const rtcPeerConn = this.peerConnection.peerConnection;
+      
+      rtcPeerConn.oniceconnectionstatechange = () => {
+        this.log('ICE connection state:', rtcPeerConn.iceConnectionState);
+        
+        if (rtcPeerConn.iceConnectionState === 'failed') {
+          this.log('ICE connection failed - may need to restart ICE');
+          
+          // Try to restart ICE if supported
+          if (rtcPeerConn.restartIce) {
+            rtcPeerConn.restartIce();
+          }
+        }
+        
+        // Handle disconnections
+        if (rtcPeerConn.iceConnectionState === 'disconnected' && 
+            this.callState === 'connected') {
+          this.log('ICE connection disconnected - waiting to see if it reconnects');
+          
+          // Wait a bit to see if it reconnects
+          setTimeout(() => {
+            if (rtcPeerConn.iceConnectionState === 'disconnected' || 
+                rtcPeerConn.iceConnectionState === 'failed') {
+              this.log('ICE connection remained disconnected, ending call');
+              this.endCall();
+            }
+          }, 5000);
+        }
+      };
+    }
   }
   
   /**
@@ -553,6 +900,9 @@ class VoiceService {
   _cleanupCall() {
     this.log('Cleaning up call resources');
     
+    // Clear all timeouts
+    this._clearAllTimeouts();
+    
     // Stop local media tracks
     if (this.localStream) {
       try {
@@ -594,12 +944,24 @@ class VoiceService {
     const previousRemoteUser = this.remoteUserKey;
     this.remoteUserKey = null;
     this.isOutgoingCall = false;
+    this.currentConnectionAttempt = 0;
     
     // Notify listeners of final state
     this._notifyListeners('call_state_changed', { 
       state: null, 
       contact: previousRemoteUser
     });
+  }
+  
+  /**
+   * Clear all connection timeouts
+   */
+  _clearAllTimeouts() {
+    // Clear all pending timeouts
+    this.connectionTimeouts.forEach(timeoutId => {
+      clearTimeout(timeoutId);
+    });
+    this.connectionTimeouts = [];
   }
   
   /**
@@ -616,6 +978,9 @@ class VoiceService {
       }
       
       this.log('Joining call:', callId, 'with contact:', contactPublicKey);
+      
+      // Re-check network type before starting call
+      this._detectNetworkType();
       
       // Set call parameters
       this.callId = callId;
@@ -647,6 +1012,9 @@ class VoiceService {
         contact: contactPublicKey,
         outgoing: true
       });
+      
+      // Reset connection attempt counter
+      this.currentConnectionAttempt = 0;
       
       // Initiate WebRTC connection
       this._initiateWebRTCConnection();
@@ -692,167 +1060,22 @@ class VoiceService {
   getMuteState() {
     return this.isMuted;
   }
-
+  
   /**
- * Enhanced WebRTC connection with retry logic and mobile optimization
- */
-_enhancedWebRTCConnection() {
-  if (!this.localStream) {
-    this.log('Local stream not available, cannot initiate WebRTC');
-    this.endCall();
-    return;
-  }
-  
-  this.log('Initiating enhanced WebRTC connection with:', this.remoteUserKey);
-  
-  // Always create a fresh Peer instance
-  if (this.peer) {
-    try {
-      this.peer.destroy();
-    } catch (e) {
-      console.warn('Error destroying existing peer:', e);
-    }
-  }
-  
-  // Create unique peer ID based on call ID and our key
-  const myPeerId = `${this.userPublicKey}-${this.callId}`;
-  this.log('My peer ID:', myPeerId);
-  
-  // Track connection attempts
-  let connectionAttempts = 0;
-  const maxConnectionAttempts = 5;
-  
-  // Initialize PeerJS with configuration
-  this.peer = new Peer(myPeerId, this.peerConfig);
-  
-  // Connection timeout handler
-  let connectionTimeout;
-  
-  // Detect if we're on a mobile connection
-  const isMobileConnection = () => {
-    if (typeof navigator !== 'undefined' && navigator.connection) {
-      // Use Network Information API if available
-      return navigator.connection.type === 'cellular';
-    }
-    return false; // Unknown
-  };
-  
-  // Set connection timeout based on network type
-  const setConnectionTimeout = (callback, timeout) => {
-    // Use longer timeout for mobile connections
-    const adjustedTimeout = isMobileConnection() ? timeout * 2 : timeout;
+   * Process a signaling message from the messaging system
+   * This helps with WebRTC signaling over the message channel
+   */
+  processSignalingMessage(senderKey, signalData) {
+    this.log('Processing incoming signaling message from:', senderKey);
     
-    clearTimeout(connectionTimeout);
-    connectionTimeout = setTimeout(callback, adjustedTimeout);
-    
-    return connectionTimeout;
-  };
-  
-  // Connection attempt function with retry logic
-  const attemptConnection = () => {
-    connectionAttempts++;
-    this.log(`Connection attempt ${connectionAttempts} of ${maxConnectionAttempts}`);
-    
-    if (connectionAttempts > maxConnectionAttempts) {
-      this.log('Maximum connection attempts reached, giving up');
-      this.callState = 'ended';
-      this._notifyListeners('call_state_changed', {
-        state: 'ended',
-        contact: this.remoteUserKey,
-        reason: 'connection_failed'
-      });
-      
-      this._cleanupCall();
+    // Basic validation
+    if (!signalData) {
+      this.log('Invalid signal data received');
       return;
     }
     
-    try {
-      const remotePeerId = `${this.remoteUserKey}-${this.callId}`;
-      this.log('Calling remote peer:', remotePeerId);
-      
-      // Call the remote peer
-      this.peerConnection = this.peer.call(remotePeerId, this.localStream);
-      
-      if (!this.peerConnection) {
-        this.log('Failed to create peer connection');
-        
-        // Retry after delay
-        setConnectionTimeout(() => {
-          attemptConnection();
-        }, 2000);
-        
-        return;
-      }
-      
-      // Handle the connection
-      this._handlePeerConnection();
-      
-      // Set timeout for this attempt
-      setConnectionTimeout(() => {
-        // If we're still connecting, try again
-        if (this.callState === 'connecting') {
-          attemptConnection();
-        }
-      }, 5000);
-    } catch (err) {
-      console.error('Error calling remote peer:', err);
-      
-      // Retry after delay
-      setConnectionTimeout(() => {
-        attemptConnection();
-      }, 2000);
-    }
-  };
-  
-  this.peer.on('open', (id) => {
-    this.log('PeerJS connection opened with ID:', id);
-    
-    // Handle based on call direction
-    if (this.isOutgoingCall) {
-      // If this is an outgoing call, initiate connection with retry logic
-      attemptConnection();
-    }
-  });
-  
-  this.peer.on('error', (err) => {
-    console.error('PeerJS error:', err);
-    
-    if (err.type === 'peer-unavailable' && this.callState === 'connecting') {
-      // Just let the retry logic handle it
-      return;
-    }
-    
-    // For other errors, end the call if still active and we've exhausted retries
-    if (connectionAttempts >= maxConnectionAttempts && this.callState !== 'ended' && this.callState !== null) {
-      this.callState = 'ended';
-      this._notifyListeners('call_state_changed', {
-        state: 'ended',
-        contact: this.remoteUserKey,
-        reason: 'connection_error'
-      });
-      
-      // Clean up
-      this._cleanupCall();
-    }
-  });
-  
-  // Listen for incoming calls (important for the answerer)
-  this.peer.on('call', (incomingCall) => {
-    this.log('Received incoming PeerJS call');
-    
-    // Clear any existing timeouts
-    clearTimeout(connectionTimeout);
-    
-    // Answer the call with our local stream
-    incomingCall.answer(this.localStream);
-    
-    // Update our connection reference
-    this.peerConnection = incomingCall;
-    
-    // Handle the connection
-    this._handlePeerConnection();
-  });
-}
+    // For future implementation of direct signaling
+  }
   
   /**
    * Get diagnostic info for debugging
@@ -871,6 +1094,9 @@ _enhancedWebRTCConnection() {
       userPublicKey: this.userPublicKey,
       remoteUserKey: this.remoteUserKey,
       isOutgoingCall: this.isOutgoingCall,
+      networkType: this.networkType,
+      isMobileNetwork: this.isMobileNetwork,
+      currentConnectionAttempt: this.currentConnectionAttempt,
       browserInfo: {
         userAgent: navigator.userAgent,
         webRTCSupport: typeof RTCPeerConnection !== 'undefined',
