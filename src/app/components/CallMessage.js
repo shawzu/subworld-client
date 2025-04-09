@@ -6,8 +6,7 @@ import { Phone } from 'lucide-react'
 export default function CallMessage({ 
   message, 
   formatMessageTime, 
-  currentUserKey,
-  onJoinCall 
+  currentUserKey
 }) {
   const [joining, setJoining] = useState(false)
   const isSentByCurrentUser = message.sender === currentUserKey
@@ -31,34 +30,43 @@ export default function CallMessage({
   const callAge = new Date() - new Date(callData.startTime)
   const callExpired = callAge > 30 * 60 * 1000 // 30 minutes
   
-  // Get the sender's public key - needed for establishing the WebRTC connection
+  // Get the sender's public key - needed for establishing the connection
   const contactPublicKey = isSentByCurrentUser ? message.recipient : message.sender
   
-  const handleJoinCall = () => {
+  const handleJoinCall = async () => {
     if (callExpired) return
     
-    console.log('Joining call with ID:', callData.callId, 'and contact:', contactPublicKey);
     setJoining(true)
     
-    if (typeof window !== 'undefined' && window.voiceService) {
-      // Direct call to the voice service to avoid any potential issues
-      window.voiceService.joinCall(callData.callId, contactPublicKey)
-        .then(() => {
-          console.log('Successfully joined call');
-        })
-        .catch(error => {
-          console.error('Error joining call:', error);
-          setJoining(false);
-          alert('Failed to join call: ' + (error.message || 'Unknown error'));
-        });
-    } else {
-      // Fallback to the provided onJoinCall function
-      onJoinCall(callData.callId, contactPublicKey)
-        .catch(error => {
-          console.error('Error joining call:', error);
-          setJoining(false);
-          alert('Failed to join call: ' + (error.message || 'Unknown error'));
-        });
+    try {
+      // Check if voice service is available
+      if (!window.voiceService) {
+        console.error('Voice service not available');
+        alert('Voice service not available. Please try again later.');
+        throw new Error('Voice service not available');
+      }
+      
+      // Ensure service is initialized
+      if (!window.voiceService.initialized) {
+        console.log('Voice service not yet initialized, initializing now...');
+        await window.voiceService.initialize();
+      }
+      
+      // Use the initiateCall method since we're starting a new call
+      // even if we're responding to an invitation, the original call
+      // is likely no longer active in the socket.io signaling server
+      const success = await window.voiceService.initiateCall(contactPublicKey);
+      
+      if (!success) {
+        throw new Error('Failed to initiate call');
+      }
+      
+      console.log('Call initiated successfully to:', contactPublicKey);
+    } catch (error) {
+      console.error('Error joining call:', error);
+      alert(error.message || 'Could not join the call. Please try again.');
+    } finally {
+      setJoining(false);
     }
   }
   
@@ -89,14 +97,14 @@ export default function CallMessage({
           {joining ? (
             <>
               <div className="w-4 h-4 rounded-full border-2 border-t-transparent border-white animate-spin mr-2"></div>
-              Joining Call...
+              Calling...
             </>
           ) : callExpired ? (
             'Call Expired'
           ) : (
             <>
               <Phone size={18} />
-              Join Call
+              Call Back
             </>
           )}
         </button>

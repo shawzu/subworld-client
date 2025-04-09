@@ -1,56 +1,94 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Phone } from 'lucide-react'
-import conversationManager from '../../utils/ConversationManager'
 
 export default function CallButton({ 
   contactPublicKey, 
   contactName
 }) {
-  const [isSending, setIsSending] = useState(false)
+  const [isCalling, setIsCalling] = useState(false)
+  const [voiceServiceReady, setVoiceServiceReady] = useState(false)
+  
+  // Check if voice service is available on mount
+  useEffect(() => {
+    const checkVoiceService = async () => {
+      if (typeof window === 'undefined') return;
+      
+      if (window.voiceService) {
+        setVoiceServiceReady(true);
+        return;
+      }
+      
+      // Try to import it if not available
+      try {
+        const module = await import('../../utils/VoiceService');
+        const voiceService = module.default;
+        if (voiceService) {
+          window.voiceService = voiceService;
+          
+          if (!voiceService.initialized) {
+            await voiceService.initialize();
+          }
+          
+          setVoiceServiceReady(true);
+          console.log('Voice service loaded in CallButton');
+        }
+      } catch (error) {
+        console.error('Error loading voice service in CallButton:', error);
+      }
+    };
+    
+    checkVoiceService();
+  }, []);
   
   const handleClick = async () => {
-    if (isSending) return;
+    if (isCalling) return;
     
     console.log('Call button clicked for contact:', contactPublicKey);
-    setIsSending(true);
+    setIsCalling(true);
     
     try {
-      // Generate a unique call ID
-      const callId = `call-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+      // Check if voice service is available
+      if (!window.voiceService) {
+        console.error('Voice service not available');
+        alert('Voice service not available. Please try again later.');
+        throw new Error('Voice service not available');
+      }
       
-      // Create call invitation message
-      const callData = {
-        callId,
-        startTime: new Date().toISOString()
-      };
+      // Ensure service is initialized
+      if (!window.voiceService.initialized) {
+        console.log('Voice service not yet initialized, initializing now...');
+        await window.voiceService.initialize();
+      }
       
-      // Create a special message for the call invitation
-      const callMessage = `CALL_INVITATION:${JSON.stringify(callData)}`;
+      // Initiate call directly with the contact's public key
+      const success = await window.voiceService.initiateCall(contactPublicKey);
       
-      // Send the call invitation message
-      await conversationManager.sendMessage(contactPublicKey, callMessage);
+      if (!success) {
+        throw new Error('Failed to initiate call');
+      }
       
-      console.log('Call invitation sent with ID:', callId);
+      console.log('Call initiated successfully to:', contactPublicKey);
     } catch (error) {
-      console.error('Error sending call invitation:', error);
-      alert('Could not send call invitation. Please try again.');
+      console.error('Error initiating call:', error);
+      alert(error.message || 'Could not start the call. Please try again.');
     } finally {
-      setIsSending(false);
+      setIsCalling(false);
     }
   }
 
   return (
     <button
       onClick={handleClick}
-      disabled={isSending}
+      disabled={isCalling || !voiceServiceReady}
       className={`p-2 rounded-full ${
-        isSending ? 'bg-gray-500 cursor-not-allowed' : 'bg-blue-500 hover:bg-blue-600'
+        !voiceServiceReady ? 'bg-gray-400 cursor-not-allowed' :
+        isCalling ? 'bg-gray-500 cursor-not-allowed' : 'bg-blue-500 hover:bg-blue-600'
       } text-white transition-colors duration-200 flex items-center justify-center`}
-      title={`Call ${contactName}`}
+      title={!voiceServiceReady ? 'Voice service initializing...' : `Call ${contactName}`}
     >
-      <Phone size={20} className={isSending ? 'animate-pulse' : ''} />
+      <Phone size={20} className={isCalling ? 'animate-pulse' : ''} />
     </button>
   )
 }

@@ -7,7 +7,9 @@ import {
   Mic,
   MicOff,
   X,
-  Loader
+  Loader,
+  PhoneIncoming,
+  PhoneOutgoing
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 
@@ -16,8 +18,11 @@ const CallUI = ({
   contactName,
   onHangUp,
   onToggleMute,
+  onAnswerCall,
+  onRejectCall,
   isMuted,
-  callDuration
+  callDuration,
+  isOutgoing
 }) => {
   // UI animations
   const containerVariants = {
@@ -46,6 +51,8 @@ const CallUI = ({
   // Get call status text
   const getStatusText = () => {
     switch (callState) {
+      case 'ringing':
+        return isOutgoing ? 'Calling...' : 'Incoming call...'
       case 'connecting':
         return 'Connecting...'
       case 'connected':
@@ -70,9 +77,18 @@ const CallUI = ({
         >
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center">
-              <div className={`w-10 h-10 rounded-full ${callState === 'connecting' ? 'bg-yellow-500' : callState === 'connected' ? 'bg-green-500' : 'bg-red-500'} flex items-center justify-center mr-3`}>
+              <div className={`w-10 h-10 rounded-full flex items-center justify-center mr-3 ${
+                callState === 'connecting' ? 'bg-yellow-500' : 
+                callState === 'connected' ? 'bg-green-500' : 
+                callState === 'ringing' ? (isOutgoing ? 'bg-blue-500' : 'bg-purple-500') : 
+                'bg-red-500'
+              }`}>
                 {callState === 'connecting' ? (
                   <Loader className="text-white animate-spin" size={20} />
+                ) : callState === 'ringing' && isOutgoing ? (
+                  <PhoneOutgoing className="text-white" size={20} />
+                ) : callState === 'ringing' && !isOutgoing ? (
+                  <PhoneIncoming className="text-white" size={20} />
                 ) : (
                   <Phone className="text-white" size={20} />
                 )}
@@ -124,6 +140,34 @@ const CallUI = ({
                   className="w-12 h-12 rounded-full bg-red-600 flex items-center justify-center text-white hover:bg-red-700 transition-colors"
                 >
                   <PhoneOff size={20} />
+                </button>
+              </>
+            )}
+
+            {/* Ringing call buttons */}
+            {callState === 'ringing' && isOutgoing && (
+              <button
+                onClick={onHangUp}
+                className="w-12 h-12 rounded-full bg-red-600 flex items-center justify-center text-white hover:bg-red-700 transition-colors"
+              >
+                <PhoneOff size={20} />
+              </button>
+            )}
+
+            {/* Incoming call buttons */}
+            {callState === 'ringing' && !isOutgoing && (
+              <>
+                <button
+                  onClick={onRejectCall}
+                  className="w-12 h-12 rounded-full bg-red-600 flex items-center justify-center text-white hover:bg-red-700 transition-colors"
+                >
+                  <PhoneOff size={20} />
+                </button>
+                <button
+                  onClick={onAnswerCall}
+                  className="w-12 h-12 rounded-full bg-green-600 flex items-center justify-center text-white hover:bg-green-700 transition-colors"
+                >
+                  <Phone size={20} />
                 </button>
               </>
             )}

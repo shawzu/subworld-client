@@ -57,24 +57,27 @@ export default function App() {
       if (typeof window !== 'undefined') {
         // Import and initialize voice service
         import('../../utils/VoiceService').then(module => {
-          window.voiceService = module.default;
+          const voiceService = module.default;
+          if (!voiceService) {
+            console.error('Voice service import returned undefined');
+            return;
+          }
+          
+          window.voiceService = voiceService;
           console.log('Voice service loaded globally');
-
+  
           // Initialize voice service
-          window.voiceService.initialize().catch(err => {
-            console.warn('Failed to initialize voice service:', err);
-          });
-
-          // Connect voice service with conversation manager if available
-          if (window.conversationManager) {
-            console.log('Connecting voice service with conversation manager');
+          if (!voiceService.initialized) {
+            voiceService.initialize().catch(err => {
+              console.warn('Failed to initialize voice service:', err);
+            });
           }
         }).catch(err => {
           console.error('Failed to load voice service:', err);
         });
       }
     };
-
+  
     // Start the service connection process
     setupServices();
   }, []);

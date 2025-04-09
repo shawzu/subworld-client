@@ -5,8 +5,7 @@ import contactStore from '../../utils/ContactStore'
 import CallUI from './CallUI'
 
 /**
- * CallHandler component manages WebRTC calls and renders the CallUI
- * This component should be included once at the app level
+ * CallHandler component manages voice calls and renders the CallUI
  */
 const CallHandler = () => {
   const [callState, setCallState] = useState(null)
@@ -14,7 +13,7 @@ const CallHandler = () => {
   const [isMuted, setIsMuted] = useState(false)
   const [permissionError, setPermissionError] = useState(null)
   const [callDuration, setCallDuration] = useState(0)
-  const [callDiagnostics, setCallDiagnostics] = useState(null)
+  const [isOutgoing, setIsOutgoing] = useState(false)
   
   // Refs for audio elements
   const localAudioRef = useRef(null)
@@ -22,14 +21,12 @@ const CallHandler = () => {
   
   // Timer ref for call duration
   const durationTimerRef = useRef(null)
-  // Diagnostic timer
-  const diagnosticTimerRef = useRef(null)
-
+  
   // Set up event listeners when component mounts
   useEffect(() => {
     console.log('CallHandler component mounted');
     
-    // Initialize voice service - defer to window load
+    // Initialize voice service
     const initVoiceService = () => {
       if (typeof window === 'undefined') return;
       
@@ -39,12 +36,18 @@ const CallHandler = () => {
         
         // Try to import the voice service module
         import('../../utils/VoiceService').then(module => {
-          window.voiceService = module.default;
+          const voiceService = module.default;
+          if (!voiceService) {
+            console.error('Voice service import returned undefined');
+            return;
+          }
+          
+          window.voiceService = voiceService;
           console.log('Voice service loaded dynamically');
           
-          if (!window.voiceService.initialized) {
+          if (!voiceService.initialized) {
             console.log('Initializing voice service from CallHandler');
-            window.voiceService.initialize().catch(error => {
+            voiceService.initialize().catch(error => {
               console.error('Failed to initialize voice service:', error);
               handlePermissionError(error);
             });
@@ -96,34 +99,12 @@ const CallHandler = () => {
       }, 1000);
     };
     
-    // Start diagnostic timer for debugging connection issues
-    const startDiagnosticTimer = () => {
-      if (diagnosticTimerRef.current) {
-        clearInterval(diagnosticTimerRef.current);
-      }
-      
-      diagnosticTimerRef.current = setInterval(() => {
-        if (window.voiceService && window.voiceService.getDiagnosticInfo) {
-          const info = window.voiceService.getDiagnosticInfo();
-          setCallDiagnostics(info);
-          
-          // Log every 10 seconds for debugging
-          console.log('Call diagnostic info:', info);
-        }
-      }, 10000); // Every 10 seconds
-    };
-    
     // Clear timers
     const clearTimers = () => {
       console.log("Clearing call timers");
       if (durationTimerRef.current) {
         clearInterval(durationTimerRef.current);
         durationTimerRef.current = null;
-      }
-      
-      if (diagnosticTimerRef.current) {
-        clearInterval(diagnosticTimerRef.current);
-        diagnosticTimerRef.current = null;
       }
     };
 
@@ -141,6 +122,11 @@ const CallHandler = () => {
             console.log('Call state changed to:', data.state);
             setCallState(data.state);
             
+            // Track if call is outgoing
+            if (data.outgoing !== undefined) {
+              setIsOutgoing(data.outgoing);
+            }
+            
             // Set contact name if available
             if (data.contact && contactStore) {
               const contact = contactStore.getContact(data.contact);
@@ -150,7 +136,6 @@ const CallHandler = () => {
             // Start or stop timers based on call state
             if (data.state === 'connected') {
               startDurationTimer();
-              startDiagnosticTimer();
             } else if (data.state === 'ended' || data.state === null) {
               clearTimers();
             }
@@ -167,7 +152,6 @@ const CallHandler = () => {
                   return prevState;
                 });
                 setCallDuration(0);
-                setCallDiagnostics(null);
               }, 3000);
             }
             break;
@@ -195,13 +179,6 @@ const CallHandler = () => {
                 });
               }
             }
-            
-            // Also attach local stream to local audio element for monitoring
-            if (window.voiceService.localStream && localAudioRef.current) {
-              console.log('Setting local stream to audio element');
-              localAudioRef.current.srcObject = window.voiceService.localStream;
-              localAudioRef.current.play().catch(err => console.error('Error playing local audio:', err));
-            }
             break;
         }
       });
@@ -218,11 +195,6 @@ const CallHandler = () => {
       if (remoteAudioRef.current && remoteAudioRef.current.paused && remoteAudioRef.current.srcObject) {
         console.log('User interaction detected, trying to play audio');
         remoteAudioRef.current.play().catch(err => console.error('Still could not play audio:', err));
-      }
-      
-      // Also try local audio
-      if (localAudioRef.current && localAudioRef.current.paused && localAudioRef.current.srcObject) {
-        localAudioRef.current.play().catch(err => console.error('Could not play local audio:', err));
       }
     };
     
@@ -272,11 +244,24 @@ const CallHandler = () => {
       setIsMuted(window.voiceService.toggleMute());
     }
   };
+  
+  const handleAnswerCall = () => {
+    console.log('User answered call');
+    if (window.voiceService) {
+      window.voiceService.answerCall();
+    }
+  };
+  
+  const handleRejectCall = () => {
+    console.log('User rejected call');
+    if (window.voiceService) {
+      window.voiceService.rejectCall();
+    }
+  };
 
   return (
     <>
       {/* Hidden audio elements for audio playback */}
-      <audio ref={localAudioRef} autoPlay playsInline muted style={{ display: 'none' }} />
       <audio ref={remoteAudioRef} autoPlay playsInline style={{ display: 'none' }} />
       
       {/* Permission error notification */}
@@ -292,20 +277,6 @@ const CallHandler = () => {
         </div>
       )}
       
-      {/* Connection diagnostics panel - only in development */}
-      {process.env.NODE_ENV !== 'production' && callState === 'connecting' && callDiagnostics && (
-        <div className="fixed bottom-4 right-4 bg-gray-900 text-xs text-gray-300 p-3 rounded shadow-lg z-40 max-w-xs">
-          <p className="text-yellow-400 font-bold mb-1">Call Debug Info:</p>
-          <p>State: {callDiagnostics.callState}</p>
-          {callDiagnostics.iceConnectionState && (
-            <p>ICE: {callDiagnostics.iceConnectionState}</p>
-          )}
-          {callDiagnostics.peerConnected !== undefined && (
-            <p>Connected: {callDiagnostics.peerConnected ? 'Yes' : 'No'}</p>
-          )}
-        </div>
-      )}
-      
       {/* Don't render call UI if no call */}
       {callState && (
         <CallUI
@@ -313,8 +284,11 @@ const CallHandler = () => {
           contactName={contactName}
           onHangUp={handleHangUp}
           onToggleMute={handleToggleMute}
+          onAnswerCall={handleAnswerCall}
+          onRejectCall={handleRejectCall}
           isMuted={isMuted}
           callDuration={formatDuration(callDuration)}
+          isOutgoing={isOutgoing}
         />
       )}
     </>
