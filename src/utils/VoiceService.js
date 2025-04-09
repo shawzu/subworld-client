@@ -5,6 +5,7 @@ import Peer from 'peerjs';
 
 /**
  * VoiceService - Handles voice calls using Socket.io for signaling and Peer.js for WebRTC
+ * With improved audio streaming between WiFi and mobile networks
  */
 class VoiceService {
   constructor() {
@@ -44,7 +45,12 @@ class VoiceService {
     this.networkType = 'unknown';
     this.isMobileNetwork = false;
     
-    // PeerJS configuration
+    // Audio settings
+    this.audioContext = null;
+    this.audioProcessor = null;
+    this.audioEnabled = true;
+    
+    // Improved PeerJS configuration for better audio streaming
     this.peerConfig = {
       // Set debug level (0 = errors only, 1 = errors & warnings, 2 = all logs)
       debug: 1,
@@ -58,7 +64,7 @@ class VoiceService {
           { urls: 'stun:stun3.l.google.com:19302' },
           { urls: 'stun:stun4.l.google.com:19302' },
           
-          // TURN servers - using multiple TURN servers with different transport options
+          // Primary TURN servers with multiple transport options
           {
             urls: 'turn:openrelay.metered.ca:80',
             username: 'openrelayproject',
@@ -74,14 +80,14 @@ class VoiceService {
             username: 'openrelayproject',
             credential: 'openrelayproject'
           },
-          // Additional backup TURN servers
+          // Additional reliable TURN servers with TCP (works better through firewalls)
           {
-            urls: 'turn:global.turn.twilio.com:3478?transport=udp',
+            urls: 'turn:global.turn.twilio.com:3478?transport=tcp',
             username: 'f4b4035eaa76f4a55de5f4351567653ee4ff6fa97b50b6b334fcc1be9c27212d',
             credential: 'w1WqTH/+zZXcYTtS235xQc/1UH/lW60SYl1HjZ4NEkQ='
           },
           {
-            urls: 'turn:global.turn.twilio.com:3478?transport=tcp',
+            urls: 'turn:global.turn.twilio.com:443?transport=tcp',
             username: 'f4b4035eaa76f4a55de5f4351567653ee4ff6fa97b50b6b334fcc1be9c27212d',
             credential: 'w1WqTH/+zZXcYTtS235xQc/1UH/lW60SYl1HjZ4NEkQ='
           }
@@ -90,8 +96,13 @@ class VoiceService {
         bundlePolicy: 'max-bundle',
         rtcpMuxPolicy: 'require',
         // These help with mobile connections
-        iceTransportPolicy: 'all', // Try with 'relay' if still having issues
+        iceTransportPolicy: 'all', // Will be set to 'relay' for mobile
         sdpSemantics: 'unified-plan'
+      },
+      // Key options for audio handling
+      constraints: {
+        audio: true,
+        video: false
       }
     };
     
@@ -100,6 +111,9 @@ class VoiceService {
     
     // Timeouts for cleanup
     this.connectionTimeouts = [];
+    
+    // Audio-specific connection monitoring
+    this.audioMonitoringInterval = null;
   }
   
   /**
@@ -150,6 +164,18 @@ class VoiceService {
         // Initialize PeerJS (but don't connect yet - we'll do this per call)
         this.peer = null; // Will be created on demand per call
         
+        // Initialize AudioContext if available (will be fully activated on call)
+        if (typeof window !== 'undefined' && window.AudioContext) {
+          try {
+            this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            // Suspend until needed (to save battery and comply with autoplay policies)
+            this.audioContext.suspend();
+          } catch (audioErr) {
+            console.warn('AudioContext initialization failed:', audioErr);
+            this.audioContext = null;
+          }
+        }
+        
         this.initialized = true;
         
         // Make available globally
@@ -184,9 +210,19 @@ class VoiceService {
         
         // Listen for network changes
         connection.addEventListener('change', () => {
+          const prevNetwork = this.networkType;
+          const prevIsMobile = this.isMobileNetwork;
+          
           this.networkType = connection.type || connection.effectiveType || 'unknown';
           this.isMobileNetwork = this.networkType === 'cellular';
+          
           this.log(`Network changed: ${this.networkType}, Mobile: ${this.isMobileNetwork}`);
+          
+          // If we're in a call and network type changed dramatically, we may need to adjust
+          if (this.callState === 'connected' && prevIsMobile !== this.isMobileNetwork) {
+            this.log('Network type changed significantly during call, adjusting audio settings');
+            this._adjustAudioForNetwork();
+          }
         });
       } else {
         // Fallback detection based on user agent (less reliable)
@@ -199,6 +235,61 @@ class VoiceService {
       console.error('Error detecting network type:', error);
       this.networkType = 'unknown';
       this.isMobileNetwork = false;
+    }
+  }
+  
+  /**
+   * Adjust audio settings based on network type
+   * Called when network changes during a call
+   */
+  _adjustAudioForNetwork() {
+    if (!this.peerConnection || !this.callState === 'connected') return;
+    
+    try {
+      const rtcPeerConn = this.peerConnection.peerConnection;
+      if (!rtcPeerConn) return;
+      
+      // Get all RTCRtpSenders that are sending audio
+      const audioSenders = rtcPeerConn.getSenders().filter(sender => 
+        sender.track && sender.track.kind === 'audio'
+      );
+      
+      if (audioSenders.length === 0) return;
+      
+      audioSenders.forEach(sender => {
+        // Get current parameters
+        const parameters = sender.getParameters();
+        
+        // Clone the parameters to modify
+        if (parameters.encodings && parameters.encodings.length > 0) {
+          // On mobile, reduce bitrate and prioritize reliability
+          if (this.isMobileNetwork) {
+            parameters.encodings.forEach(encoding => {
+              // Lower bitrate for mobile networks
+              encoding.maxBitrate = 24000; // 24 kbps
+              encoding.priority = 'high';
+            });
+          } else {
+            // On WiFi, allow higher quality
+            parameters.encodings.forEach(encoding => {
+              // Higher bitrate for WiFi
+              encoding.maxBitrate = 48000; // 48 kbps
+              encoding.priority = 'high';
+            });
+          }
+          
+          // Apply the modified parameters
+          sender.setParameters(parameters)
+            .then(() => {
+              this.log('Successfully adjusted audio parameters for network type:', this.networkType);
+            })
+            .catch(err => {
+              console.warn('Failed to adjust audio parameters:', err);
+            });
+        }
+      });
+    } catch (err) {
+      console.warn('Error adjusting audio for network:', err);
     }
   }
   
@@ -353,6 +444,59 @@ class VoiceService {
   }
   
   /**
+   * Process audio stream to optimize for network conditions
+   * This helps audio quality on mobile networks
+   */
+  _processAudioStream(stream) {
+    // If we don't have AudioContext or we're not in a call, just return the stream as-is
+    if (!this.audioContext || !stream) return stream;
+    
+    try {
+      // Make sure AudioContext is running
+      if (this.audioContext.state === 'suspended') {
+        this.audioContext.resume();
+      }
+      
+      // Create a source from the audio stream
+      const source = this.audioContext.createMediaStreamSource(stream);
+      
+      // Create a gain node to control volume
+      const gainNode = this.audioContext.createGain();
+      gainNode.gain.value = 1.0; // Normal volume
+      
+      // Create a compressor to improve audibility on mobile
+      const compressor = this.audioContext.createDynamicsCompressor();
+      compressor.threshold.value = -24;
+      compressor.knee.value = 30;
+      compressor.ratio.value = 12;
+      compressor.attack.value = 0.003;
+      compressor.release.value = 0.25;
+      
+      // Create destination for output
+      const destination = this.audioContext.createMediaStreamDestination();
+      
+      // Connect the nodes
+      source.connect(gainNode);
+      gainNode.connect(compressor);
+      compressor.connect(destination);
+      
+      // Store reference to processor for later adjustment
+      this.audioProcessor = {
+        source,
+        gainNode,
+        compressor,
+        destination
+      };
+      
+      // Return the processed stream
+      return destination.stream;
+    } catch (err) {
+      console.warn('Error processing audio stream:', err);
+      return stream; // Return original stream on error
+    }
+  }
+  
+  /**
    * Initiate a call to a contact
    */
   async initiateCall(contactPublicKey) {
@@ -370,15 +514,24 @@ class VoiceService {
       // Re-check network type before starting call
       this._detectNetworkType();
       
-      // Request audio permissions first, before any other operations
-      this.log('Requesting microphone access');
+      // Request audio permissions with optimized constraints
+      this.log('Requesting microphone access with optimized settings');
       try {
+        // Optimize audio constraints based on network type
+        const audioConstraints = {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        };
+        
+        // On mobile, add additional constraints for better reliability
+        if (this.isMobileNetwork) {
+          audioConstraints.channelCount = 1; // Mono audio (lower bandwidth)
+          audioConstraints.sampleRate = 16000; // Lower sample rate
+        }
+        
         this.localStream = await navigator.mediaDevices.getUserMedia({ 
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true
-          }, 
+          audio: audioConstraints, 
           video: false 
         });
         
@@ -390,7 +543,20 @@ class VoiceService {
           throw new Error('No audio track available');
         }
         
-        this.log('Audio track:', audioTracks[0].label, 'enabled:', audioTracks[0].enabled);
+        // Process the audio for better quality
+        const processedStream = this._processAudioStream(this.localStream);
+        
+        // Use processed stream if available, otherwise use original
+        if (processedStream && processedStream.getAudioTracks().length > 0) {
+          this.localStream = processedStream;
+          this.log('Using processed audio stream');
+        }
+        
+        // Make sure audio tracks are enabled
+        this.localStream.getAudioTracks().forEach(track => {
+          track.enabled = true;
+          this.log('Audio track enabled:', track.label);
+        });
       } catch (mediaError) {
         console.error('Failed to get audio stream:', mediaError);
         throw new Error('Microphone access denied. Please allow microphone access to make calls.');
@@ -441,19 +607,46 @@ class VoiceService {
       
       this.log('Answering call from:', this.remoteUserKey);
       
-      // Request audio permissions
+      // Re-check network type before answering
+      this._detectNetworkType();
+      
+      // Request audio permissions with optimized constraints
       this.log('Requesting microphone access');
       try {
+        // Optimize audio constraints based on network type
+        const audioConstraints = {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        };
+        
+        // On mobile, add additional constraints for better reliability
+        if (this.isMobileNetwork) {
+          audioConstraints.channelCount = 1; // Mono audio (lower bandwidth)
+          audioConstraints.sampleRate = 16000; // Lower sample rate
+        }
+        
         this.localStream = await navigator.mediaDevices.getUserMedia({ 
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true
-          }, 
+          audio: audioConstraints, 
           video: false 
         });
         
         this.log('Microphone access granted, tracks:', this.localStream.getTracks().length);
+        
+        // Process the audio for better quality
+        const processedStream = this._processAudioStream(this.localStream);
+        
+        // Use processed stream if available, otherwise use original
+        if (processedStream && processedStream.getAudioTracks().length > 0) {
+          this.localStream = processedStream;
+          this.log('Using processed audio stream');
+        }
+        
+        // Make sure audio tracks are enabled
+        this.localStream.getAudioTracks().forEach(track => {
+          track.enabled = true;
+          this.log('Audio track enabled:', track.label);
+        });
       } catch (mediaError) {
         console.error('Failed to get audio stream:', mediaError);
         throw new Error('Microphone access denied. Please allow microphone access to make calls.');
@@ -527,7 +720,7 @@ class VoiceService {
 
   /**
    * Enhanced WebRTC connection with retry logic and mobile optimization
-   * Improved to handle mobile data connections better
+   * Improved to handle mobile data connections better with audio focus
    */
   _enhancedWebRTCConnection() {
     if (!this.localStream) {
@@ -556,7 +749,7 @@ class VoiceService {
     this.log('My peer ID:', myPeerId);
     
     // Adjust PeerJS config based on network type
-    const peerConfig = {...this.peerConfig};
+    const peerConfig = JSON.parse(JSON.stringify(this.peerConfig)); // Deep clone
     
     // For mobile networks, prioritize TURN servers by using 'relay' policy
     if (this.isMobileNetwork) {
@@ -616,18 +809,46 @@ class VoiceService {
         const remotePeerId = `${this.remoteUserKey}-${this.callId}`;
         this.log('Calling remote peer:', remotePeerId);
         
-        // Call the remote peer with enhanced options
+        // Enhanced call options for better audio
         const callOptions = {
           metadata: {
             callId: this.callId,
-            attempt: this.currentConnectionAttempt
+            attempt: this.currentConnectionAttempt,
+            networkType: this.networkType
           },
-          // Lower values improve compatibility with mobile
+          // Modify SDP offer to optimize for audio quality
           sdpTransform: (sdp) => {
-            // Force low bitrate for audio to improve reliability on mobile
-            return sdp.replace('useinbandfec=1', 'useinbandfec=1; stereo=0; maxaveragebitrate=24000');
+            // Add additional SDP modifications for better mobile compatibility
+            let modifiedSdp = sdp;
+            
+            // Force opus codec with specific parameters for better audio
+            modifiedSdp = modifiedSdp.replace('useinbandfec=1', 'useinbandfec=1; stereo=0; sprop-stereo=0; maxaveragebitrate=24000');
+            
+            // Add b=AS line to limit bandwidth
+            const bandwidthValue = this.isMobileNetwork ? '30' : '50'; // kbps
+            const lines = modifiedSdp.split('\r\n');
+            const audioIndex = lines.findIndex(line => line.startsWith('m=audio'));
+            
+            if (audioIndex !== -1) {
+              // Add bandwidth restriction after the m=audio line
+              lines.splice(audioIndex + 1, 0, `b=AS:${bandwidthValue}`);
+              modifiedSdp = lines.join('\r\n');
+            }
+            
+            // Set audio to high priority
+            modifiedSdp = modifiedSdp.replace(/a=mid:0/g, 'a=mid:0\r\na=content:main\r\na=priority:high');
+            
+            return modifiedSdp;
           }
         };
+        
+        // Verify audio tracks are enabled before calling
+        this.localStream.getAudioTracks().forEach(track => {
+          if (!track.enabled) {
+            track.enabled = true;
+            this.log('Re-enabled audio track before call');
+          }
+        });
         
         // Make the call with audio stream and options
         this.peerConnection = this.peer.call(remotePeerId, this.localStream, callOptions);
@@ -739,8 +960,43 @@ class VoiceService {
       // Clear any existing timeouts
       this._clearAllTimeouts();
       
-      // Answer the call with our local stream
-      incomingCall.answer(this.localStream);
+      // Enhanced answer options
+      const answerOptions = {
+        sdpTransform: (sdp) => {
+          // Add additional SDP modifications for better mobile compatibility
+          let modifiedSdp = sdp;
+          
+          // Force opus codec with specific parameters for better audio
+          modifiedSdp = modifiedSdp.replace('useinbandfec=1', 'useinbandfec=1; stereo=0; sprop-stereo=0; maxaveragebitrate=24000');
+          
+          // Add b=AS line to limit bandwidth
+          const bandwidthValue = this.isMobileNetwork ? '30' : '50'; // kbps
+          const lines = modifiedSdp.split('\r\n');
+          const audioIndex = lines.findIndex(line => line.startsWith('m=audio'));
+          
+          if (audioIndex !== -1) {
+            // Add bandwidth restriction after the m=audio line
+            lines.splice(audioIndex + 1, 0, `b=AS:${bandwidthValue}`);
+            modifiedSdp = lines.join('\r\n');
+          }
+          
+          // Set audio to high priority
+          modifiedSdp = modifiedSdp.replace(/a=mid:0/g, 'a=mid:0\r\na=content:main\r\na=priority:high');
+          
+          return modifiedSdp;
+        }
+      };
+      
+      // Verify audio tracks are enabled before answering
+      this.localStream.getAudioTracks().forEach(track => {
+        if (!track.enabled) {
+          track.enabled = true;
+          this.log('Re-enabled audio track before answering call');
+        }
+      });
+      
+      // Answer the call with our local stream and options
+      incomingCall.answer(this.localStream, answerOptions);
       
       // Update our connection reference
       this.peerConnection = incomingCall;
@@ -751,7 +1007,7 @@ class VoiceService {
   }
   
   /**
-   * Handle PeerJS connection events
+   * Handle PeerJS connection events with advanced audio handling
    */
   _handlePeerConnection() {
     if (!this.peerConnection) {
@@ -759,9 +1015,27 @@ class VoiceService {
       return;
     }
     
-    // Handle remote stream
+    // Handle remote stream with enhanced audio processing
     this.peerConnection.on('stream', (stream) => {
       this.log('Received remote stream with tracks:', stream.getTracks().length);
+      
+      // Verify we have audio tracks in the remote stream
+      const remoteTracks = stream.getAudioTracks();
+      if (remoteTracks.length === 0) {
+        this.log('Warning: Remote stream has no audio tracks');
+      } else {
+        this.log('Remote audio track received:', remoteTracks[0].label, 'enabled:', remoteTracks[0].enabled);
+        
+        // Make sure the remote tracks are enabled
+        remoteTracks.forEach(track => {
+          if (!track.enabled) {
+            this.log('Remote track was disabled, enabling it');
+            track.enabled = true;
+          }
+        });
+      }
+      
+      // Store the remote stream
       this.remoteStream = stream;
       
       // Notify listeners of remote stream
@@ -776,6 +1050,9 @@ class VoiceService {
       
       // Clear all connection attempt timeouts
       this._clearAllTimeouts();
+      
+      // Start audio monitoring to ensure continued audio flow
+      this._startAudioMonitoring();
     });
     
     // Handle call closing
@@ -812,37 +1089,205 @@ class VoiceService {
       }
     });
     
-    // Listen for ICE connection state changes
+    // Access the underlying RTCPeerConnection for advanced monitoring
     if (this.peerConnection.peerConnection) {
       const rtcPeerConn = this.peerConnection.peerConnection;
       
+      // Listen for ICE connection state changes
       rtcPeerConn.oniceconnectionstatechange = () => {
         this.log('ICE connection state:', rtcPeerConn.iceConnectionState);
         
         if (rtcPeerConn.iceConnectionState === 'failed') {
-          this.log('ICE connection failed - may need to restart ICE');
+          this.log('ICE connection failed - attempting to restart ICE');
           
           // Try to restart ICE if supported
           if (rtcPeerConn.restartIce) {
             rtcPeerConn.restartIce();
+            this.log('ICE restart requested');
+          } else {
+            // Fallback: create offer with iceRestart flag
+            rtcPeerConn.createOffer({ iceRestart: true })
+              .then(offer => rtcPeerConn.setLocalDescription(offer))
+              .then(() => {
+                this.log('ICE restart via createOffer successful');
+              })
+              .catch(err => {
+                console.error('ICE restart failed:', err);
+                this.endCall();
+              });
           }
         }
         
-        // Handle disconnections
+        // Handle disconnections more gracefully
         if (rtcPeerConn.iceConnectionState === 'disconnected' && 
             this.callState === 'connected') {
           this.log('ICE connection disconnected - waiting to see if it reconnects');
           
           // Wait a bit to see if it reconnects
           setTimeout(() => {
-            if (rtcPeerConn.iceConnectionState === 'disconnected' || 
-                rtcPeerConn.iceConnectionState === 'failed') {
+            if ((rtcPeerConn.iceConnectionState === 'disconnected' || 
+                rtcPeerConn.iceConnectionState === 'failed') &&
+                this.callState === 'connected') {
               this.log('ICE connection remained disconnected, ending call');
               this.endCall();
             }
           }, 5000);
         }
+        
+        // If we're reconnected, make sure audio is flowing
+        if (rtcPeerConn.iceConnectionState === 'connected' && 
+            this.callState === 'connected') {
+          this._verifyAudioFlowing();
+        }
       };
+      
+      // Monitor connection state changes
+      rtcPeerConn.onconnectionstatechange = () => {
+        this.log('Connection state:', rtcPeerConn.connectionState);
+        
+        if (rtcPeerConn.connectionState === 'failed') {
+          this.log('Connection failed permanently, ending call');
+          this.endCall();
+        }
+      };
+      
+      // Listen for signaling state changes (helps debug)
+      rtcPeerConn.onsignalingstatechange = () => {
+        this.log('Signaling state:', rtcPeerConn.signalingState);
+      };
+    }
+  }
+  
+  /**
+   * Start monitoring audio levels to ensure audio is flowing
+   */
+  _startAudioMonitoring() {
+    // Clear any existing monitoring
+    if (this.audioMonitoringInterval) {
+      clearInterval(this.audioMonitoringInterval);
+    }
+    
+    // Start monitoring audio
+    this.audioMonitoringInterval = setInterval(() => {
+      this._verifyAudioFlowing();
+    }, 5000); // Check every 5 seconds
+  }
+  
+  /**
+   * Verify audio is flowing and fix if possible
+   */
+  _verifyAudioFlowing() {
+    // Only verify audio when connected
+    if (this.callState !== 'connected') {
+      return;
+    }
+    
+    // Check local stream
+    if (this.localStream) {
+      const localTracks = this.localStream.getAudioTracks();
+      if (localTracks.length > 0) {
+        // Make sure local tracks are enabled
+        localTracks.forEach(track => {
+          if (!track.enabled) {
+            this.log('Local track was disabled, re-enabling');
+            track.enabled = true;
+          }
+        });
+      }
+    }
+    
+    // Check remote stream
+    if (this.remoteStream) {
+      const remoteTracks = this.remoteStream.getAudioTracks();
+      if (remoteTracks.length > 0) {
+        // Check if remote tracks are enabled
+        const allEnabled = remoteTracks.every(track => track.enabled);
+        if (!allEnabled) {
+          this.log('Remote track was disabled, attempting to recover');
+          remoteTracks.forEach(track => {
+            if (!track.enabled) {
+              track.enabled = true;
+            }
+          });
+        }
+      } else if (this.callState === 'connected') {
+        this.log('No remote audio tracks but call is connected. Possible audio issue.');
+        // This is a fallback - if we're connected but have no remote tracks, there might be an issue
+        // Wait a bit and check again before handling
+        setTimeout(() => {
+          if (this.callState === 'connected' && (!this.remoteStream || this.remoteStream.getAudioTracks().length === 0)) {
+            this.log('Still no remote audio tracks after grace period. Trying to restart connection.');
+            this._tryRestartConnection();
+          }
+        }, 3000);
+      }
+    }
+    
+    // If we have access to the RTCPeerConnection, check stats to detect issues
+    if (this.peerConnection && this.peerConnection.peerConnection) {
+      const rtcPeerConn = this.peerConnection.peerConnection;
+      
+      rtcPeerConn.getStats(null).then(stats => {
+        let audioFlowing = false;
+        let bytesReceived = 0;
+        
+        // Process stats to check if audio data is flowing
+        stats.forEach(stat => {
+          // Look for inbound-rtp statistics for audio
+          if (stat.type === 'inbound-rtp' && stat.kind === 'audio') {
+            bytesReceived = stat.bytesReceived || 0;
+            
+            // If we're receiving data, audio is likely flowing
+            if (bytesReceived > 0) {
+              audioFlowing = true;
+            }
+          }
+        });
+        
+        // If we've been connected for a while but no audio is flowing, there might be an issue
+        if (!audioFlowing && this.callState === 'connected' && 
+            (Date.now() - this.connectionStartTime) > 10000) {
+          this.log('No audio data flowing detected in stats. Attempting to recover.');
+          this._tryRestartConnection();
+        }
+      }).catch(err => {
+        console.warn('Error getting peer connection stats:', err);
+      });
+    }
+  }
+  
+  /**
+   * Try to restart the connection if audio issues are detected
+   */
+  _tryRestartConnection() {
+    if (!this.peerConnection || !this.peerConnection.peerConnection || this.callState !== 'connected') {
+      return;
+    }
+    
+    try {
+      const rtcPeerConn = this.peerConnection.peerConnection;
+      
+      // First try an ICE restart
+      this.log('Attempting to fix audio issues by restarting ICE');
+      
+      // Create a new offer with iceRestart flag
+      rtcPeerConn.createOffer({ iceRestart: true })
+        .then(offer => rtcPeerConn.setLocalDescription(offer))
+        .then(() => {
+          this.log('ICE restart for audio recovery initiated');
+        })
+        .catch(err => {
+          console.warn('Failed to restart ICE for audio recovery:', err);
+          
+          // If ICE restart fails and we still have no audio, consider ending the call
+          setTimeout(() => {
+            if (this.callState === 'connected') {
+              this._verifyAudioFlowing();
+            }
+          }, 5000);
+        });
+    } catch (error) {
+      console.warn('Error trying to restart connection:', error);
     }
   }
   
@@ -903,6 +1348,12 @@ class VoiceService {
     // Clear all timeouts
     this._clearAllTimeouts();
     
+    // Clear audio monitoring
+    if (this.audioMonitoringInterval) {
+      clearInterval(this.audioMonitoringInterval);
+      this.audioMonitoringInterval = null;
+    }
+    
     // Stop local media tracks
     if (this.localStream) {
       try {
@@ -913,6 +1364,34 @@ class VoiceService {
         console.error('Error stopping local tracks:', e);
       }
       this.localStream = null;
+    }
+    
+    // Clean up audio processing
+    if (this.audioProcessor) {
+      try {
+        // Disconnect audio processing nodes
+        if (this.audioProcessor.source) {
+          this.audioProcessor.source.disconnect();
+        }
+        if (this.audioProcessor.gainNode) {
+          this.audioProcessor.gainNode.disconnect();
+        }
+        if (this.audioProcessor.compressor) {
+          this.audioProcessor.compressor.disconnect();
+        }
+      } catch (e) {
+        console.warn('Error cleaning up audio processor:', e);
+      }
+      this.audioProcessor = null;
+    }
+    
+    // Suspend AudioContext to save resources
+    if (this.audioContext && this.audioContext.state === 'running') {
+      try {
+        this.audioContext.suspend();
+      } catch (e) {
+        console.warn('Error suspending audio context:', e);
+      }
     }
     
     // Close peer connection
@@ -987,19 +1466,43 @@ class VoiceService {
       this.remoteUserKey = contactPublicKey;
       this.isOutgoingCall = true; // We're initiating the connection
       
-      // Request audio permissions
+      // Request audio permissions with optimized constraints
       this.log('Requesting microphone access for join');
       try {
+        // Optimize audio constraints based on network type
+        const audioConstraints = {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        };
+        
+        // On mobile, add additional constraints for better reliability
+        if (this.isMobileNetwork) {
+          audioConstraints.channelCount = 1; // Mono audio (lower bandwidth)
+          audioConstraints.sampleSize = 16000; // Lower sample rate
+        }
+        
         this.localStream = await navigator.mediaDevices.getUserMedia({ 
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true
-          }, 
+          audio: audioConstraints, 
           video: false 
         });
         
         this.log('Microphone access granted for join, tracks:', this.localStream.getTracks().length);
+        
+        // Process the audio for better quality
+        const processedStream = this._processAudioStream(this.localStream);
+        
+        // Use processed stream if available, otherwise use original
+        if (processedStream && processedStream.getAudioTracks().length > 0) {
+          this.localStream = processedStream;
+          this.log('Using processed audio stream for join');
+        }
+        
+        // Make sure audio tracks are enabled
+        this.localStream.getAudioTracks().forEach(track => {
+          track.enabled = true;
+          this.log('Audio track enabled for join:', track.label);
+        });
       } catch (mediaError) {
         console.error('Failed to get audio stream for join:', mediaError);
         throw new Error('Microphone access denied. Please allow microphone access to make calls.');
@@ -1041,6 +1544,7 @@ class VoiceService {
     // Update all audio tracks
     this.localStream.getAudioTracks().forEach(track => {
       track.enabled = !this.isMuted;
+      this.log(`Audio track ${track.label} ${track.enabled ? 'enabled' : 'disabled'}`);
     });
     
     this._notifyListeners('mute_changed', { isMuted: this.isMuted });
@@ -1087,16 +1591,24 @@ class VoiceService {
       callId: this.callId,
       isMuted: this.isMuted,
       hasLocalStream: !!this.localStream,
+      localStreamTracks: this.localStream ? this.localStream.getTracks().length : 0,
       hasRemoteStream: !!this.remoteStream,
+      remoteStreamTracks: this.remoteStream ? this.remoteStream.getTracks().length : 0,
       socketConnected: this.socket && this.socket.connected,
       peerInitialized: !!this.peer,
       peerConnectionActive: !!this.peerConnection,
+      iceConnectionState: this.peerConnection && this.peerConnection.peerConnection ? 
+        this.peerConnection.peerConnection.iceConnectionState : 'unknown',
+      connectionState: this.peerConnection && this.peerConnection.peerConnection ? 
+        this.peerConnection.peerConnection.connectionState : 'unknown',
       userPublicKey: this.userPublicKey,
       remoteUserKey: this.remoteUserKey,
       isOutgoingCall: this.isOutgoingCall,
       networkType: this.networkType,
       isMobileNetwork: this.isMobileNetwork,
       currentConnectionAttempt: this.currentConnectionAttempt,
+      audioContextState: this.audioContext ? this.audioContext.state : 'none',
+      hasAudioProcessor: !!this.audioProcessor,
       browserInfo: {
         userAgent: navigator.userAgent,
         webRTCSupport: typeof RTCPeerConnection !== 'undefined',
