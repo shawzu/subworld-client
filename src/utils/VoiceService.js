@@ -67,8 +67,8 @@ class VoiceService {
           // Primary TURN servers with multiple transport options
           {
             urls: [
-              'turn:proxy.inhouses.xyz:5349?transport=udp',
-              'turn:proxy.inhouses.xyz:5349?transport=tcp'
+              'turn:134.209.228.151:3478?transport=udp',
+              'turn:134.209.228.151:3478?transport=tcp'
             ],
             username: 'subworlduser',
             credential: 'subworldpass'
