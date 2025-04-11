@@ -66,30 +66,9 @@ class VoiceService {
 
           // Primary TURN servers with multiple transport options
           {
-            urls: 'turn:openrelay.metered.ca:80',
-            username: 'openrelayproject',
-            credential: 'openrelayproject'
-          },
-          {
-            urls: 'turn:openrelay.metered.ca:443',
-            username: 'openrelayproject',
-            credential: 'openrelayproject'
-          },
-          {
-            urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-            username: 'openrelayproject',
-            credential: 'openrelayproject'
-          },
-          // Additional reliable TURN servers with TCP (works better through firewalls)
-          {
-            urls: 'turn:global.turn.twilio.com:3478?transport=tcp',
-            username: 'f4b4035eaa76f4a55de5f4351567653ee4ff6fa97b50b6b334fcc1be9c27212d',
-            credential: 'w1WqTH/+zZXcYTtS235xQc/1UH/lW60SYl1HjZ4NEkQ='
-          },
-          {
-            urls: 'turn:global.turn.twilio.com:443?transport=tcp',
-            username: 'f4b4035eaa76f4a55de5f4351567653ee4ff6fa97b50b6b334fcc1be9c27212d',
-            credential: 'w1WqTH/+zZXcYTtS235xQc/1UH/lW60SYl1HjZ4NEkQ='
+            urls: 'https://proxy.inhouses.xyz:3478',
+            username: 'subworlduser',
+            credential: 'subworldpass'
           }
         ],
         iceCandidatePoolSize: 10,
