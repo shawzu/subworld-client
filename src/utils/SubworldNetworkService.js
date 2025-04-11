@@ -986,6 +986,284 @@ class SubworldNetworkService {
     }
   }
 
+  // Group-related methods
+  async createGroup(name, description, members = []) {
+    try {
+      if (!this.currentNode) {
+        throw new Error('No node selected');
+      }
+
+      // Prepare the request data
+      const groupData = {
+        name,
+        description,
+        creator: this.keyPair.publicKeyDisplay,
+        members: [...members] // Add any initial members
+      };
+
+      // Use proxy for the API request
+      const nodeId = this.currentNode.id || 'bootstrap1';
+      console.log('Creating group via proxy:', `${this.proxyBaseUrl}${nodeId}/groups/create`);
+
+      // Send the request
+      const response = await fetch(`${this.proxyBaseUrl}${nodeId}/groups/create`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(groupData)
+      });
+
+      if (!response.ok) {
+        const errorData = await response.text();
+        console.error('Server response:', errorData);
+        throw new Error(`Failed to create group: ${response.status}`);
+      }
+
+      const data = await response.json();
+      console.log('Group created successfully:', data);
+
+      return {
+        success: true,
+        groupId: data.id
+      };
+    } catch (error) {
+      console.error('Error creating group:', error);
+      throw error;
+    }
+  }
+
+  async getGroup(groupId) {
+    try {
+      if (!this.currentNode) {
+        throw new Error('No node selected');
+      }
+
+      // Use proxy for the API request
+      const nodeId = this.currentNode.id || 'bootstrap1';
+      console.log('Fetching group via proxy:', `${this.proxyBaseUrl}${nodeId}/groups/get?group_id=${groupId}`);
+
+      const response = await fetch(`${this.proxyBaseUrl}${nodeId}/groups/get?group_id=${groupId}`);
+
+      if (!response.ok) {
+        const errorData = await response.text();
+        console.error('Server response:', errorData);
+        throw new Error(`Failed to get group: ${response.status}`);
+      }
+
+      const group = await response.json();
+      return group;
+    } catch (error) {
+      console.error('Error getting group:', error);
+      throw error;
+    }
+  }
+
+  async listUserGroups() {
+    try {
+      if (!this.currentNode || !this.keyPair) {
+        throw new Error('No node selected or user keys not available');
+      }
+
+      // Use proxy for the API request
+      const nodeId = this.currentNode.id || 'bootstrap1';
+      const userId = this.keyPair.publicKeyDisplay;
+      console.log('Fetching user groups via proxy:', `${this.proxyBaseUrl}${nodeId}/groups/list?user_id=${userId}`);
+
+      const response = await fetch(`${this.proxyBaseUrl}${nodeId}/groups/list?user_id=${userId}`);
+
+      if (!response.ok) {
+        const errorData = await response.text();
+        console.error('Server response:', errorData);
+        throw new Error(`Failed to list groups: ${response.status}`);
+      }
+
+      const groups = await response.json();
+      return groups;
+    } catch (error) {
+      console.error('Error listing user groups:', error);
+      throw error;
+    }
+  }
+
+  async joinGroup(groupId) {
+    try {
+      if (!this.currentNode || !this.keyPair) {
+        throw new Error('No node selected or user keys not available');
+      }
+
+      // Prepare the request data
+      const joinData = {
+        group_id: groupId,
+        user_id: this.keyPair.publicKeyDisplay
+      };
+
+      // Use proxy for the API request
+      const nodeId = this.currentNode.id || 'bootstrap1';
+      console.log('Joining group via proxy:', `${this.proxyBaseUrl}${nodeId}/groups/join`);
+
+      const response = await fetch(`${this.proxyBaseUrl}${nodeId}/groups/join`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(joinData)
+      });
+
+      if (!response.ok) {
+        const errorData = await response.text();
+        console.error('Server response:', errorData);
+        throw new Error(`Failed to join group: ${response.status}`);
+      }
+
+      const data = await response.json();
+      return { success: true };
+    } catch (error) {
+      console.error('Error joining group:', error);
+      throw error;
+    }
+  }
+
+  async leaveGroup(groupId) {
+    try {
+      if (!this.currentNode || !this.keyPair) {
+        throw new Error('No node selected or user keys not available');
+      }
+
+      // Prepare the request data
+      const leaveData = {
+        group_id: groupId,
+        user_id: this.keyPair.publicKeyDisplay
+      };
+
+      // Use proxy for the API request
+      const nodeId = this.currentNode.id || 'bootstrap1';
+      console.log('Leaving group via proxy:', `${this.proxyBaseUrl}${nodeId}/groups/leave`);
+
+      const response = await fetch(`${this.proxyBaseUrl}${nodeId}/groups/leave`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(leaveData)
+      });
+
+      if (!response.ok) {
+        const errorData = await response.text();
+        console.error('Server response:', errorData);
+        throw new Error(`Failed to leave group: ${response.status}`);
+      }
+
+      const data = await response.json();
+      return { success: true };
+    } catch (error) {
+      console.error('Error leaving group:', error);
+      throw error;
+    }
+  }
+
+  async getGroupMembers(groupId) {
+    try {
+      if (!this.currentNode) {
+        throw new Error('No node selected');
+      }
+
+      // Use proxy for the API request
+      const nodeId = this.currentNode.id || 'bootstrap1';
+      console.log('Fetching group members via proxy:', `${this.proxyBaseUrl}${nodeId}/groups/members?group_id=${groupId}`);
+
+      const response = await fetch(`${this.proxyBaseUrl}${nodeId}/groups/members?group_id=${groupId}`);
+
+      if (!response.ok) {
+        const errorData = await response.text();
+        console.error('Server response:', errorData);
+        throw new Error(`Failed to get group members: ${response.status}`);
+      }
+
+      const data = await response.json();
+      return {
+        members: data.members || [],
+        admins: data.admins || []
+      };
+    } catch (error) {
+      console.error('Error getting group members:', error);
+      throw error;
+    }
+  }
+
+  async sendGroupMessage(groupId, content) {
+    try {
+      if (!this.currentNode || !this.keyPair) {
+        throw new Error('No node selected or user keys not available');
+      }
+
+      // Prepare the message payload
+      const message = {
+        group_id: groupId,
+        sender_id: this.keyPair.publicKeyDisplay,
+        encrypted_data: content, // For simplicity, not encrypting group messages in this example
+        type: 6, // TypeGroupMessage
+        timestamp: new Date().toISOString(),
+        id: `grpmsg-${Date.now()}`,
+        is_group_msg: true
+      };
+
+      // Use proxy for the API request
+      const nodeId = this.currentNode.id || 'bootstrap1';
+      console.log('Sending group message via proxy:', `${this.proxyBaseUrl}${nodeId}/groups/messages/send`);
+
+      const response = await fetch(`${this.proxyBaseUrl}${nodeId}/groups/messages/send`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(message)
+      });
+
+      if (!response.ok) {
+        const errorData = await response.text();
+        console.error('Server response:', errorData);
+        throw new Error(`Failed to send group message: ${response.status}`);
+      }
+
+      const data = await response.json();
+      return {
+        success: true,
+        messageId: data.id || `local-${Date.now()}`
+      };
+    } catch (error) {
+      console.error('Error sending group message:', error);
+      throw error;
+    }
+  }
+
+  async getGroupMessages(groupId) {
+    try {
+      if (!this.currentNode || !this.keyPair) {
+        throw new Error('No node selected or user keys not available');
+      }
+
+      // Use proxy for the API request
+      const nodeId = this.currentNode.id || 'bootstrap1';
+      const userId = this.keyPair.publicKeyDisplay;
+      console.log('Fetching group messages via proxy:', `${this.proxyBaseUrl}${nodeId}/groups/messages/get?group_id=${groupId}&user_id=${userId}`);
+
+      const response = await fetch(`${this.proxyBaseUrl}${nodeId}/groups/messages/get?group_id=${groupId}&user_id=${userId}`);
+
+      if (!response.ok) {
+        const errorData = await response.text();
+        console.error('Server response:', errorData);
+        throw new Error(`Failed to get group messages: ${response.status}`);
+      }
+
+      const messages = await response.json();
+      return messages;
+    } catch (error) {
+      console.error('Error getting group messages:', error);
+      throw error;
+    }
+  }
+
 
   /**
  * Check the health of a specific node via proxy

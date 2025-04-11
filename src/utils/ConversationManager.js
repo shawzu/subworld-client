@@ -22,6 +22,9 @@ class ConversationManager {
 
     // Reference to call service (will be set later)
     this.callService = null;
+
+    this.groups = [];
+    this.groupMessages = {};
   }
 
   /**
@@ -59,6 +62,8 @@ class ConversationManager {
         console.error('Error loading conversations from storage:', storageError);
         this.conversations = [];
       }
+
+      await this.initializeGroups();
 
       this.initialized = true;
 
@@ -158,27 +163,27 @@ class ConversationManager {
     if (typeof window === 'undefined' || !window.voiceService || this.isProcessingCallMessages) {
       return;
     }
-    
+
     try {
       this.isProcessingCallMessages = true;
-      
+
       // Find call signaling messages
       for (const message of messages) {
         // Skip our own messages
         if (message.sender === this.currentUserKey) continue;
-        
+
         // Check if this is a call signaling message
         if (typeof message.content === 'string' && message.content.startsWith(this.callSignalPrefix)) {
           console.log('Found call signal message:', message.id);
-          
+
           // Extract the signaling data
           try {
             const signalString = message.content.substring(this.callSignalPrefix.length);
             const signalData = JSON.parse(signalString);
-            
+
             // Log the signal type for debugging
             console.log('Processing call signal type:', signalData.type);
-            
+
             // Process the signaling message
             if (window.voiceService && typeof window.voiceService.processSignalingMessage === 'function') {
               window.voiceService.processSignalingMessage(message.sender, signalData.data || signalData);
@@ -197,25 +202,25 @@ class ConversationManager {
     }
   }
 
-   /**
-   * Process a new message and handle any special message types (like call signals)
-   * @param {Object} message - The message to process
-   * @private
-   */
-   _processMessage(message) {
+  /**
+  * Process a new message and handle any special message types (like call signals)
+  * @param {Object} message - The message to process
+  * @private
+  */
+  _processMessage(message) {
     // Skip processing our own messages
     if (message.sender === this.currentUserKey) return;
-    
+
     try {
       // Check if this is a call signaling message
       if (typeof message.content === 'string' && message.content.startsWith(this.callSignalPrefix)) {
         console.log('Found call signal in _processMessage:', message.content.substring(0, 100) + '...');
-        
+
         try {
           // Extract the signaling data
           const signalString = message.content.substring(this.callSignalPrefix.length);
           const signalData = JSON.parse(signalString);
-          
+
           // Process WebRTC signal immediately
           if (typeof window !== 'undefined' && window.voiceService) {
             if (signalData.data) {
@@ -244,7 +249,7 @@ class ConversationManager {
       console.log("Sending call signal:", signalData.type || signalData.data?.type);
       // Add prefix to identify as call signal
       const signalMessage = `${this.callSignalPrefix}${JSON.stringify(signalData)}`;
-      
+
       // Send using regular message channel
       await this.sendMessage(recipientPublicKey, signalMessage);
       console.log("Call signal sent successfully");
@@ -756,6 +761,268 @@ class ConversationManager {
   cleanup() {
     this.stopFetchInterval()
   }
+
+  /**
+ * Initialize groups from localStorage
+ */
+  async initializeGroups() {
+    try {
+      // Load groups from localStorage
+      const savedGroups = localStorage.getItem('subworld_groups');
+      if (savedGroups) {
+        const parsed = JSON.parse(savedGroups);
+        this.groups = Array.isArray(parsed) ? parsed : [];
+      } else {
+        this.groups = [];
+      }
+
+      // Load group messages
+      const savedGroupMessages = localStorage.getItem('subworld_group_messages');
+      if (savedGroupMessages) {
+        this.groupMessages = JSON.parse(savedGroupMessages);
+      } else {
+        this.groupMessages = {};
+      }
+
+      // Fetch latest groups from network
+      await this.fetchGroups();
+
+      return true;
+    } catch (error) {
+      console.error('Error initializing groups:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Fetch groups from the network
+   */
+  async fetchGroups() {
+    if (!subworldNetwork) return false;
+
+    try {
+      const groups = await subworldNetwork.listUserGroups();
+      this.groups = groups || [];
+      this._persistGroups();
+      return true;
+    } catch (error) {
+      console.error('Error fetching groups:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Create a new group
+   */
+  async createGroup(name, description, members = []) {
+    if (!subworldNetwork) {
+      throw new Error('Network service not available');
+    }
+
+    try {
+      const result = await subworldNetwork.createGroup(name, description, members);
+      if (!result.success) {
+        throw new Error('Failed to create group');
+      }
+
+      // Fetch the newly created group
+      const group = await subworldNetwork.getGroup(result.groupId);
+
+      // Add to local list
+      this.groups.push(group);
+      this._persistGroups();
+
+      return group;
+    } catch (error) {
+      console.error('Error creating group:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Send a message to a group
+   */
+  async sendGroupMessage(groupId, content) {
+    if (!subworldNetwork) {
+      throw new Error('Network service not available');
+    }
+
+    try {
+      // Send the message
+      const result = await subworldNetwork.sendGroupMessage(groupId, content);
+
+      // Create message object
+      const message = {
+        id: result.messageId,
+        sender: this.currentUserKey,
+        groupId: groupId,
+        content: content,
+        timestamp: new Date().toISOString(),
+        status: 'sent',
+        isGroupMsg: true
+      };
+
+      // Add to local messages
+      if (!this.groupMessages[groupId]) {
+        this.groupMessages[groupId] = [];
+      }
+
+      this.groupMessages[groupId].push(message);
+      this._persistGroupMessages();
+
+      return message;
+    } catch (error) {
+      console.error('Error sending group message:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Fetch messages for a group
+   */
+  async fetchGroupMessages(groupId) {
+    if (!subworldNetwork) {
+      throw new Error('Network service not available');
+    }
+
+    try {
+      const messages = await subworldNetwork.getGroupMessages(groupId);
+
+      // Process and store messages
+      if (!this.groupMessages[groupId]) {
+        this.groupMessages[groupId] = [];
+      }
+
+      // Convert network messages to our format
+      const processedMessages = messages.map(msg => ({
+        id: msg.id,
+        sender: msg.sender_id,
+        groupId: msg.group_id,
+        content: msg.encrypted_data, // For simplicity, group messages aren't encrypted in this example
+        timestamp: msg.timestamp,
+        status: 'received',
+        isGroupMsg: true
+      }));
+
+      // Merge with existing messages, avoiding duplicates
+      const existingIds = new Set(this.groupMessages[groupId].map(m => m.id));
+      const newMessages = processedMessages.filter(m => !existingIds.has(m.id));
+
+      if (newMessages.length > 0) {
+        this.groupMessages[groupId] = [
+          ...this.groupMessages[groupId],
+          ...newMessages
+        ].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+        this._persistGroupMessages();
+      }
+
+      return this.groupMessages[groupId];
+    } catch (error) {
+      console.error('Error fetching group messages:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Join a group
+   */
+  async joinGroup(groupId) {
+    if (!subworldNetwork) {
+      throw new Error('Network service not available');
+    }
+
+    try {
+      await subworldNetwork.joinGroup(groupId);
+
+      // Refresh groups
+      await this.fetchGroups();
+
+      return true;
+    } catch (error) {
+      console.error('Error joining group:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Leave a group
+   */
+  async leaveGroup(groupId) {
+    if (!subworldNetwork) {
+      throw new Error('Network service not available');
+    }
+
+    try {
+      await subworldNetwork.leaveGroup(groupId);
+
+      // Remove from local list
+      this.groups = this.groups.filter(g => g.id !== groupId);
+      this._persistGroups();
+
+      return true;
+    } catch (error) {
+      console.error('Error leaving group:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get messages for a group
+   */
+  getGroupMessages(groupId) {
+    return this.groupMessages[groupId] || [];
+  }
+
+  /**
+   * Get all groups
+   */
+  getAllGroups() {
+    return [...this.groups];
+  }
+
+  /**
+   * Get a group by ID
+   */
+  getGroup(groupId) {
+    return this.groups.find(g => g.id === groupId);
+  }
+
+  /**
+   * Persist groups to localStorage
+   */
+  _persistGroups() {
+    localStorage.setItem('subworld_groups', JSON.stringify(this.groups));
+  }
+
+  /**
+   * Persist group messages to localStorage
+   */
+  _persistGroupMessages() {
+    localStorage.setItem('subworld_group_messages', JSON.stringify(this.groupMessages));
+  }
+
+  // Get group preview data (for group list)
+  getGroupPreviews() {
+    return this.groups.map(group => {
+      const messages = this.groupMessages[group.id] || [];
+      const lastMessage = messages.length > 0 ?
+        messages.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))[0] : null;
+
+      return {
+        id: group.id,
+        name: group.name,
+        description: group.description,
+        members: group.members.length,
+        isAdmin: group.admins.includes(this.currentUserKey),
+        lastMessage: lastMessage?.content || '',
+        lastMessageTime: lastMessage?.timestamp || group.created,
+        avatar: group.avatar || null,
+        isGroup: true
+      };
+    }).sort((a, b) => new Date(b.lastMessageTime) - new Date(a.lastMessageTime));
+  }
+
 }
 
 // Create singleton instance
