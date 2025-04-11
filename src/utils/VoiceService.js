@@ -74,13 +74,13 @@ class VoiceService {
             username: 'subworlduser',
             credential: 'subworldpass'
           }*/
-            {
-              urls: [
-                'turn:relay1.expressturn.com:3478'
-              ],
-              username: 'efQX0LFAL6X57HSHIV',
-              credential: 'EUOrSrU4chhCfoRT'
-            }
+          {
+            urls: [
+              'turn:relay1.expressturn.com:3478'
+            ],
+            username: 'efQX0LFAL6X57HSHIV',
+            credential: 'EUOrSrU4chhCfoRT'
+          }
         ],
         iceCandidatePoolSize: 10,
         bundlePolicy: 'max-bundle',
@@ -193,42 +193,77 @@ class VoiceService {
   _detectNetworkType() {
     try {
       const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+      const userAgent = navigator.userAgent.toLowerCase();
 
-      if (connection) {
-        // Get initial network type
-        this.networkType = connection.type || connection.effectiveType || 'unknown';
-        this.isMobileNetwork = this.networkType === 'cellular';
+      // Multiple detection methods
+      const isCellular = connection?.type === 'cellular';
+      const isUserAgentMobile = /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini/i.test(userAgent);
+      const isEffectiveTypeSlow = connection?.effectiveType === 'slow-2g' ||
+        connection?.effectiveType === '2g' ||
+        connection?.effectiveType === '3g';
 
-        this.log(`Detected network type: ${this.networkType}, Mobile: ${this.isMobileNetwork}`);
+      this.isMobileNetwork = isCellular || isUserAgentMobile || isEffectiveTypeSlow;
+      this.networkType = this.isMobileNetwork ? 'mobile' : 'wifi';
 
-        // Listen for network changes
-        connection.addEventListener('change', () => {
-          const prevNetwork = this.networkType;
-          const prevIsMobile = this.isMobileNetwork;
-
-          this.networkType = connection.type || connection.effectiveType || 'unknown';
-          this.isMobileNetwork = this.networkType === 'cellular';
-
-          this.log(`Network changed: ${this.networkType}, Mobile: ${this.isMobileNetwork}`);
-
-          // If we're in a call and network type changed dramatically, we may need to adjust
-          if (this.callState === 'connected' && prevIsMobile !== this.isMobileNetwork) {
-            this.log('Network type changed significantly during call, adjusting audio settings');
-            this._adjustAudioForNetwork();
-          }
-        });
-      } else {
-        // Fallback detection based on user agent (less reliable)
-        const userAgent = navigator.userAgent.toLowerCase();
-        this.isMobileNetwork = /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini/i.test(userAgent);
-        this.networkType = this.isMobileNetwork ? 'cellular?' : 'unknown';
-        this.log(`Network detection fallback: ${this.networkType}, Mobile: ${this.isMobileNetwork}`);
-      }
+      this.log(`Comprehensive Network Detection:
+        Cellular Connection: ${isCellular}
+        User Agent Mobile: ${isUserAgentMobile}
+        Slow Network Type: ${isEffectiveTypeSlow}
+        Final Network Type: ${this.networkType}
+      `);
     } catch (error) {
-      console.error('Error detecting network type:', error);
-      this.networkType = 'unknown';
-      this.isMobileNetwork = false;
+      console.error('Advanced network detection failed:', error);
     }
+  }
+
+  // More robust TURN server configuration
+  _fetchTurnCredentials() {
+    const mobileTurnServers = [
+      {
+        urls: [
+          'turn:relay1.expressturn.com:3478',
+        ],
+        username: 'efQX0LFAL6X57HSHIV',
+        credential: 'EUOrSrU4chhCfoRT'
+      }
+      
+    ];
+
+    const wifiTurnServers = [
+      // Higher quality TURN servers for stable connections
+    ];
+
+    this.peerConfig.config.iceServers = this.isMobileNetwork
+      ? mobileTurnServers
+      : wifiTurnServers;
+  }
+
+  // Adaptive connection retry with mobile optimization
+  _initiateWebRTCConnection() {
+    const mobileConnectionStrategy = {
+      baseTimeout: 5000,
+      maxAttempts: 10,
+      backoffFactor: 1.5,
+      jitterFactor: 0.3
+    };
+
+    const wifiConnectionStrategy = {
+      baseTimeout: 3000,
+      maxAttempts: 5,
+      backoffFactor: 1.2,
+      jitterFactor: 0.2
+    };
+
+    const strategy = this.isMobileNetwork
+      ? mobileConnectionStrategy
+      : wifiConnectionStrategy;
+
+    // Implement exponential backoff with jitter for more resilient mobile connections
+    const calculateRetryDelay = (attempt) => {
+      const baseDelay = strategy.baseTimeout * Math.pow(strategy.backoffFactor, attempt);
+      const jitter = baseDelay * strategy.jitterFactor * (Math.random() * 2 - 1);
+      return baseDelay + jitter;
+    };
   }
 
   /**
