@@ -65,6 +65,7 @@ class VoiceService {
           { urls: 'stun:stun4.l.google.com:19302' },
 
           // Primary TURN servers with multiple transport options
+          /*
           {
             urls: [
               'turn:134.209.228.151:3478?transport=udp',
@@ -72,7 +73,14 @@ class VoiceService {
             ],
             username: 'subworlduser',
             credential: 'subworldpass'
-          }
+          }*/
+            {
+              urls: [
+                'turn:relay1.expressturn.com:3478'
+              ],
+              username: 'efQX0LFAL6X57HSHIV',
+              credential: 'EUOrSrU4chhCfoRT'
+            }
         ],
         iceCandidatePoolSize: 10,
         bundlePolicy: 'max-bundle',
