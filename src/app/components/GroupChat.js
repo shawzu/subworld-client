@@ -24,61 +24,99 @@ export default function GroupChat({
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
     }
 
-    // Load messages when group changes
     useEffect(() => {
         if (!group || !group.id) {
-            setMessages([]);
-            setIsLoading(false);
-            return;
+          setMessages([]);
+          setIsLoading(false);
+          return;
         }
-
+      
         const loadMessages = async () => {
-            setIsLoading(true);
-            try {
-                // Initialize with empty array
-                let existingMessages = [];
-
-                // Try to get existing messages
-                if (conversationManager) {
-                    try {
-                        const groupMsgs = conversationManager.getGroupMessages(group.id);
-                        if (Array.isArray(groupMsgs)) {
-                            existingMessages = groupMsgs;
-                        }
-                    } catch (err) {
-                        console.warn('Could not load existing group messages:', err);
-                    }
+          setIsLoading(true);
+          try {
+            // Initialize with empty array
+            let existingMessages = [];
+      
+            // Try to get existing messages
+            if (conversationManager) {
+              try {
+                const groupMsgs = conversationManager.getGroupMessages(group.id);
+                if (Array.isArray(groupMsgs)) {
+                  existingMessages = groupMsgs;
                 }
-
-                // Set to whatever we have, even if empty
-                setMessages(existingMessages);
-
-                // Try to fetch new messages
-                if (conversationManager) {
-                    try {
-                        await conversationManager.fetchGroupMessages(group.id);
-
-                        // Update with fresh messages
-                        const freshMsgs = conversationManager.getGroupMessages(group.id);
-                        if (Array.isArray(freshMsgs)) {
-                            setMessages(freshMsgs);
-                        }
-                    } catch (fetchErr) {
-                        console.warn('Error fetching group messages:', fetchErr);
-                        // Keep using existing messages
-                    }
-                }
-            } catch (error) {
-                console.error('Error in group message loading flow:', error);
-                // Ensure we have at least an empty array
-                setMessages([]);
-            } finally {
-                setIsLoading(false);
+              } catch (err) {
+                console.warn('Could not load existing group messages:', err);
+              }
             }
+      
+            // Filter out duplicate messages
+            const uniqueMessages = [];
+            const seenIds = new Set();
+      
+            // Filter out duplicate messages by ID
+            existingMessages.forEach(msg => {
+              // Ensure each message has an ID
+              const msgId = msg.id || `gen-${Date.now()}-${Math.random()}`;
+              
+              // If we haven't seen this ID before, add it
+              if (!seenIds.has(msgId)) {
+                msg.id = msgId; // Ensure ID is set
+                seenIds.add(msgId);
+                uniqueMessages.push(msg);
+              }
+            });
+      
+            // Set the filtered messages
+            setMessages(uniqueMessages);
+      
+            // Try to fetch new messages
+            if (conversationManager) {
+              try {
+                await conversationManager.fetchGroupMessages(group.id);
+      
+                // Update with fresh messages and filter duplicates again
+                const freshMsgs = conversationManager.getGroupMessages(group.id);
+                if (Array.isArray(freshMsgs)) {
+                  // Clear the previous sets for a fresh filtering
+                  const uniqueFreshMessages = [];
+                  const seenFreshIds = new Set();
+      
+                  // Filter out duplicate messages by ID
+                  freshMsgs.forEach(msg => {
+                    // Ensure each message has an ID
+                    const msgId = msg.id || `gen-${Date.now()}-${Math.random()}`;
+                    
+                    // If we haven't seen this ID before, add it
+                    if (!seenFreshIds.has(msgId)) {
+                      msg.id = msgId; // Ensure ID is set
+                      seenFreshIds.add(msgId);
+                      uniqueFreshMessages.push(msg);
+                    }
+                  });
+      
+                  setMessages(uniqueFreshMessages);
+                }
+              } catch (fetchErr) {
+                console.warn('Error fetching group messages:', fetchErr);
+                // Keep using existing filtered messages
+              }
+            }
+      
+            // Mark the group as read when opened
+            if (conversationManager && conversationManager.markGroupAsRead) {
+              conversationManager.markGroupAsRead(group.id);
+            }
+          } catch (error) {
+            console.error('Error in group message loading flow:', error);
+            // Ensure we have at least an empty array
+            setMessages([]);
+          } finally {
+            setIsLoading(false);
+          }
         };
-
+      
         loadMessages();
-    }, [group]);
+      }, [group]);
 
     // Scroll to bottom when messages change
     useEffect(() => {
@@ -176,14 +214,17 @@ export default function GroupChat({
                     </div>
                 ) : (
                     messages.map((msg) => (
-                        <div key={msg.id || `msg-${Date.now()}-${Math.random()}`} className={`${msg.sender === currentUserKey ? 'text-right' : ''}`}>
+                        <div
+                           
+                            key={`${msg.id || `msg-${Date.now()}-${Math.random()}`}`}
+                            className={`${msg.sender === currentUserKey ? 'text-right' : ''}`}
+                        >
                             {msg.sender !== currentUserKey && (
                                 <div className="text-xs text-gray-500 mb-1">
                                     {getContactName(msg.sender)}
                                 </div>
                             )}
-                            <div className={`inline-block p-3 px-5 rounded-2xl ${msg.sender === currentUserKey ? 'bg-blue-600' : 'bg-gray-800'
-                                }`}>
+                            <div className={`inline-block p-3 px-5 rounded-2xl ${msg.sender === currentUserKey ? 'bg-blue-600' : 'bg-gray-800'}`}>
                                 {msg.content}
                             </div>
                             <div className="text-xs text-gray-500 mt-2">

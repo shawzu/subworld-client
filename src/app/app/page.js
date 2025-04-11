@@ -449,27 +449,24 @@ export default function App() {
       alert('Service not available. Please try again later.');
       return;
     }
-
+  
     try {
-      // Create the group through the conversation manager
+  
       const group = await conversationManager.createGroup(
         groupData.name,
         groupData.description,
         groupData.members
       );
-
-      // Update local state
-      setGroups([...groups, group]);
-
-      // Select the new group
+  
+   
       setSelectedGroup(group);
       setSelectedConversation(null);
-
-      // Switch to mobile view if needed
+  
+ 
       if (isMobile) {
         setShowConversationList(false);
       }
-
+  
       return group;
     } catch (error) {
       console.error('Error creating group:', error);

@@ -1365,6 +1365,50 @@ class SubworldNetworkService {
       return { isOnline: false, latency: 999 };
     }
   }
+
+  async addGroupMember(groupId, memberPublicKey) {
+    try {
+      if (!this.currentNode || !this.keyPair) {
+        throw new Error('No node selected or user keys not available');
+      }
+  
+   
+      const requestData = {
+        group_id: groupId,
+        user_id: memberPublicKey,
+        added_by: this.keyPair.publicKeyDisplay 
+      };
+  
+
+      const nodeId = this.currentNode.id || 'bootstrap1';
+      console.log('Adding member to group via proxy:', `${this.proxyBaseUrl}${nodeId}/groups/add_member`);
+  
+  
+      const response = await fetch(`${this.proxyBaseUrl}${nodeId}/groups/join`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          group_id: groupId,
+          user_id: memberPublicKey,
+          admin_id: this.keyPair.publicKeyDisplay
+        })
+      });
+  
+      if (!response.ok) {
+        const errorData = await response.text();
+        console.error('Server response:', errorData);
+        throw new Error(`Failed to add member to group: ${response.status}`);
+      }
+  
+      const data = await response.json();
+      return { success: true };
+    } catch (error) {
+      console.error('Error adding group member:', error);
+      throw error;
+    }
+  }
 }
 
 // Create singleton instance

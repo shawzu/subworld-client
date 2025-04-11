@@ -41,37 +41,38 @@ export default function GroupDetails({ group, onClose, currentUserKey }) {
     return contact?.alias || publicKeyStr
   }
 
-  // Add a new member to the group
   const handleAddMember = async (e) => {
-    e.preventDefault()
-    if (!newMemberKey.trim() || !conversationManager) return
-
+    e.preventDefault();
+    if (!newMemberKey.trim() || !conversationManager) return;
+  
     try {
-      setAddingMember(true)
-      
-      // Instead of using addGroupMember which doesn't exist, use joinGroup
-      // This assumes the conversationManager.joinGroup method can be used to add a member
-      await conversationManager.joinGroup(group.id, newMemberKey.trim());
+      setAddingMember(true);
+
+      if (typeof conversationManager.addGroupMember === 'function') {
+        await conversationManager.addGroupMember(group.id, newMemberKey.trim());
+      } else {
+        await conversationManager.addMemberToGroup(group.id, newMemberKey.trim());
+      }
       
       // Refresh group data
-      const updatedGroup = await conversationManager.refreshGroup ?
-        await conversationManager.refreshGroup(group.id) :
-        await conversationManager.getGroup(group.id);
+      const updatedGroup = await conversationManager.refreshGroup(group.id);
       
       // Update members list
       if (updatedGroup && updatedGroup.members) {
-        setMembers(updatedGroup.members)
+        setMembers(updatedGroup.members);
       }
       
       // Clear input
-      setNewMemberKey('')
+      setNewMemberKey('');
+
     } catch (error) {
-      console.error('Failed to add member:', error)
-      alert('Failed to add member. Please check the key and try again.')
+      console.error('Failed to add member:', error);
+      alert('Failed to add member. Please check the key and try again.');
     } finally {
-      setAddingMember(false)
+      setAddingMember(false);
     }
-}
+  }
+
   // Leave the group
   const handleLeaveGroup = async () => {
     if (!conversationManager) return

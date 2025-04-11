@@ -331,9 +331,9 @@ class ConversationManager {
   }
 
   /**
-   * Fetch new messages from the network
-   * @returns {Promise<number>} - Number of new messages
-   */
+ * Fetch new messages from the network
+ * @returns {Promise<number>} - Number of new messages
+ */
   async fetchNewMessages() {
     try {
       // Rate limiting - only fetch every 30 seconds at most
@@ -359,27 +359,28 @@ class ConversationManager {
 
       // Get messages from network service with explicit try/catch
       let messages;
+      let newMessageCount = 0;
+
       try {
         messages = await subworldNetwork.fetchMessages();
         console.log('Messages received:', messages ? (Array.isArray(messages) ? messages.length : 'non-array') : 'null');
       } catch (fetchError) {
         console.error('Error in network fetchMessages:', fetchError);
-        return 0;
+        messages = [];
       }
 
       // Validate that messages is an array
       if (!messages) {
         console.warn('No messages returned');
-        return 0;
+        messages = [];
       }
 
       if (!Array.isArray(messages)) {
         console.warn('Invalid messages format:', typeof messages);
-        return 0;
+        messages = [];
       }
 
       // Process new messages
-      let newMessageCount = 0;
       const processedIds = [];
 
       for (let i = 0; i < messages.length; i++) {
@@ -485,6 +486,51 @@ class ConversationManager {
         }
       }
 
+      // Additionally fetch group messages for all groups
+      try {
+        // Refresh groups list first
+        await this.fetchGroups();
+
+        // Then fetch messages for each group
+        if (Array.isArray(this.groups)) {
+          for (const group of this.groups) {
+            if (group && group.id) {
+              try {
+                const previousMessages = this.groupMessages[group.id] ?
+                  this.groupMessages[group.id].length : 0;
+
+                await this.fetchGroupMessages(group.id);
+
+                // Check if we got new messages by comparing counts
+                if (this.groupMessages[group.id]) {
+                  const newMessages = this.groupMessages[group.id].length - previousMessages;
+                  if (newMessages > 0) {
+                    newMessageCount += newMessages;
+
+                    // Update the last message timestamp for sorting
+                    const sortedMessages = [...this.groupMessages[group.id]].sort(
+                      (a, b) => new Date(b.timestamp) - new Date(a.timestamp)
+                    );
+
+                    if (sortedMessages.length > 0) {
+                      // Find the group and update its information
+                      const groupIndex = this.groups.findIndex(g => g.id === group.id);
+                      if (groupIndex >= 0) {
+                        this.groups[groupIndex].lastMessageTime = sortedMessages[0].timestamp;
+                      }
+                    }
+                  }
+                }
+              } catch (groupMsgError) {
+                console.warn(`Error fetching messages for group ${group.id}:`, groupMsgError);
+              }
+            }
+          }
+        }
+      } catch (groupError) {
+        console.error('Error refreshing group messages:', groupError);
+      }
+
       try {
         // Update last fetch time
         this.lastFetch = new Date();
@@ -494,6 +540,8 @@ class ConversationManager {
 
         // Persist changes
         this._persistConversations();
+        this._persistGroupMessages();
+        this._persistGroups();
       } catch (updateError) {
         console.error('Error updating conversation state:', updateError);
       }
@@ -622,27 +670,88 @@ class ConversationManager {
   }
 
   /**
-   * Get conversation preview data (for conversation list)
-   * @returns {Array} - Array of conversation previews
-   */
+  * Get conversation preview data (for conversation list)
+  * @returns {Array} - Array of conversation previews
+  */
   getConversationPreviews() {
-    return this.conversations.map(conversation => {
-      const contact = contactStore.getContact(conversation.contactPublicKey)
-      const lastMessage = this._getLastMessage(conversation)
+    // Direct message conversations
+    const directPreviews = this.conversations.map(conversation => {
+      const contact = contactStore?.getContact(conversation.contactPublicKey);
+      const lastMessage = this._getLastMessage(conversation);
 
       return {
-        id: conversation.id,
+        id: `direct-${conversation.id || conversation.contactPublicKey}`, // Prefix to ensure uniqueness
         contactPublicKey: conversation.contactPublicKey,
         contactName: contact?.alias || conversation.contactPublicKey,
         lastMessage: lastMessage?.content || '',
         lastMessageTime: lastMessage?.timestamp || conversation.createdAt,
         unreadCount: conversation.unreadCount || 0,
-        isOnline: false // Would be determined by network connectivity
+        isOnline: false, // Would be determined by network connectivity
+        isGroup: false // Explicitly mark as not a group
+      };
+    });
+
+    // Group conversations
+    const groupPreviews = this.groups.map(group => {
+      // Get messages for this group
+      const messages = this.groupMessages[group.id] || [];
+
+      // Find last message - sort by timestamp (newest first)
+      const sortedMessages = [...messages].sort(
+        (a, b) => new Date(b.timestamp) - new Date(a.timestamp)
+      );
+
+      const lastMessage = sortedMessages.length > 0 ? sortedMessages[0] : null;
+
+
+      const lastReadTimestamp = group.lastReadTimestamp || 0;
+      const unreadCount = messages.filter(msg =>
+        msg.sender !== this.currentUserKey &&
+        new Date(msg.timestamp) > new Date(lastReadTimestamp)
+      ).length;
+
+      return {
+        id: `group-${group.id}`,
+        groupId: group.id,
+        name: group.name,
+        description: group.description,
+        members: group.members?.length || 0,
+        isAdmin: group.admins?.includes(this.currentUserKey),
+        lastMessage: lastMessage ? lastMessage.content : '',
+        lastMessageTime: lastMessage ? lastMessage.timestamp : group.created,
+        unreadCount: unreadCount,
+        avatar: group.avatar || null,
+        isGroup: true
+      };
+    });
+
+    // Combine and sort by last message time, newest first
+    const combined = [...directPreviews, ...groupPreviews];
+
+    return combined.sort((a, b) => {
+      // Handle potentially missing timestamps
+      const timeA = a.lastMessageTime ? new Date(a.lastMessageTime) : new Date(0);
+      const timeB = b.lastMessageTime ? new Date(b.lastMessageTime) : new Date(0);
+
+      // Check for valid dates
+      if (isNaN(timeA.getTime()) || isNaN(timeB.getTime())) {
+        return 0; // Keep order unchanged for invalid dates
       }
-    }).sort((a, b) => {
-      // Sort by last message time, newest first
-      return new Date(b.lastMessageTime) - new Date(a.lastMessageTime)
-    })
+
+      return timeB - timeA; // Newest first
+    });
+  }
+
+  markGroupAsRead(groupId) {
+    if (!groupId) return;
+
+    // Find the group
+    const groupIndex = this.groups.findIndex(g => g.id === groupId);
+    if (groupIndex >= 0) {
+      // Update the last read timestamp to now
+      this.groups[groupIndex].lastReadTimestamp = new Date().toISOString();
+      this._persistGroups();
+    }
   }
 
   /**
@@ -818,20 +927,29 @@ class ConversationManager {
     if (!subworldNetwork) {
       throw new Error('Network service not available');
     }
-
+  
     try {
       const result = await subworldNetwork.createGroup(name, description, members);
       if (!result.success) {
         throw new Error('Failed to create group');
       }
+  
 
-      // Fetch the newly created group
       const group = await subworldNetwork.getGroup(result.groupId);
+  
 
-      // Add to local list
-      this.groups.push(group);
+      const existingGroupIndex = this.groups.findIndex(g => g.id === group.id);
+      
+      if (existingGroupIndex >= 0) {
+    
+        this.groups[existingGroupIndex] = group;
+      } else {
+       
+        this.groups.push(group);
+      }
+      
       this._persistGroups();
-
+  
       return group;
     } catch (error) {
       console.error('Error creating group:', error);
@@ -878,59 +996,114 @@ class ConversationManager {
   }
 
   /**
-   * Fetch messages for a group
-   */
+ * Fetch messages for a group
+ * @param {string} groupId - The ID of the group to fetch messages for
+ * @returns {Promise<Array>} - Array of messages
+ */
   async fetchGroupMessages(groupId) {
     if (!subworldNetwork || !groupId) {
-      return [];
+      return this.groupMessages[groupId] || [];
     }
-  
+
     try {
+      console.log(`Fetching messages for group: ${groupId}`);
+
+      // Make the network request to get group messages
       const messages = await subworldNetwork.getGroupMessages(groupId);
-  
-      // Process and store messages
+      console.log(`Received ${Array.isArray(messages) ? messages.length : 'no'} messages for group ${groupId}`);
+
+      // Ensure we have a storage location for this group's messages
       if (!this.groupMessages) {
         this.groupMessages = {};
       }
-      
+
       if (!this.groupMessages[groupId]) {
         this.groupMessages[groupId] = [];
       }
-  
+
+      // Create a map of existing message IDs for faster lookup
+      const existingMessageIds = new Map();
+      this.groupMessages[groupId].forEach(msg => {
+        if (msg && msg.id) {
+          existingMessageIds.set(msg.id, true);
+        }
+      });
+
       // Ensure messages is an array
       const messageArray = Array.isArray(messages) ? messages : [];
-  
-      // Convert network messages to our format
-      const processedMessages = messageArray.map(msg => ({
-        id: msg.id || `msg-${Date.now()}-${Math.random()}`,
-        sender: msg.sender_id || msg.senderID || 'unknown',
-        groupId: msg.group_id || msg.groupID || groupId,
-        content: msg.encrypted_data || msg.encryptedData || '[No content]',
-        timestamp: msg.timestamp || new Date().toISOString(),
-        status: 'received',
-        isGroupMsg: true
-      }));
-  
-      // Merge with existing messages, avoiding duplicates
-      const existingIds = new Set(this.groupMessages[groupId].map(m => m.id));
-      const newMessages = processedMessages.filter(m => !existingIds.has(m.id));
-  
-      if (newMessages.length > 0) {
-        this.groupMessages[groupId] = [
-          ...this.groupMessages[groupId],
-          ...newMessages
-        ].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-  
-        this._persistGroupMessages();
+
+      // Process and normalize new messages
+      let newMessagesCount = 0;
+
+      const processedMessages = messageArray.map(msg => {
+        // Generate a reliable ID if missing
+        const messageId = msg.id ||
+          `grp-${groupId}-${msg.sender_id || msg.senderID || 'unknown'}-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+
+        // Structure the message consistently
+        return {
+          id: messageId,
+          sender: msg.sender_id || msg.senderID || 'unknown',
+          groupId: msg.group_id || msg.groupID || groupId,
+          content: msg.encrypted_data || msg.encryptedData || '[No content]',
+          timestamp: msg.timestamp || new Date().toISOString(),
+          status: 'received',
+          isGroupMsg: true
+        };
+      });
+
+      // Add only new messages to avoid duplicates
+      for (const message of processedMessages) {
+        if (!existingMessageIds.has(message.id)) {
+          this.groupMessages[groupId].push(message);
+          newMessagesCount++;
+
+          // Update the group's last message time if this is the newest message
+          this._updateGroupLastMessageTime(groupId, message.timestamp);
+        }
       }
-  
+
+      // Sort messages by timestamp
+      this.groupMessages[groupId].sort((a, b) => {
+        return new Date(a.timestamp) - new Date(b.timestamp); // Oldest first for displaying
+      });
+
+      // Persist changes
+      this._persistGroupMessages();
+
+      console.log(`Added ${newMessagesCount} new messages for group ${groupId}`);
+
       return this.groupMessages[groupId];
     } catch (error) {
-      console.error('Error fetching group messages:', error);
-      // Return empty array instead of throwing
+      console.error(`Error fetching group messages for ${groupId}:`, error);
+      // Return existing messages instead of throwing
       return this.groupMessages[groupId] || [];
     }
   }
+
+  /**
+   * Helper method to update a group's last message time
+   * @private
+   */
+  _updateGroupLastMessageTime(groupId, timestamp) {
+    if (!groupId || !timestamp) return;
+
+    const groupIndex = this.groups.findIndex(g => g.id === groupId);
+    if (groupIndex >= 0) {
+      const newTime = new Date(timestamp);
+      const currentLastMessageTime = this.groups[groupIndex].lastMessageTime ?
+        new Date(this.groups[groupIndex].lastMessageTime) : new Date(0);
+
+      // Only update if this message is newer
+      if (newTime > currentLastMessageTime) {
+        this.groups[groupIndex].lastMessageTime = timestamp;
+        // Persist the updated group data
+        this._persistGroups();
+      }
+    }
+  }
+
+
 
   /**
    * Join a group
@@ -949,6 +1122,30 @@ class ConversationManager {
       return true;
     } catch (error) {
       console.error('Error joining group:', error);
+      throw error;
+    }
+  }
+
+  async addMemberToGroup(groupId, memberPublicKey) {
+    if (!subworldNetwork) {
+      throw new Error('Network service not available');
+    }
+
+    try {
+      const group = await subworldNetwork.getGroup(groupId);
+
+      if (group.members.includes(memberPublicKey)) {
+        return true;
+      }
+      const updatedMembers = [...group.members, memberPublicKey];
+
+      const result = await subworldNetwork.addGroupMember(groupId, memberPublicKey);
+
+      await this.fetchGroupMessages(groupId);
+
+      return result.success;
+    } catch (error) {
+      console.error('Error adding member to group:', error);
       throw error;
     }
   }
@@ -1007,9 +1204,6 @@ class ConversationManager {
     }
   }
 
-  /**
-   * Get messages for a group
-   */
   getGroupMessages(groupId) {
     if (!groupId) {
       console.warn('No groupId provided to getGroupMessages');
@@ -1022,13 +1216,19 @@ class ConversationManager {
         this.groupMessages = {};
       }
 
-      // Return the messages array or an empty array if not found
-      return this.groupMessages[groupId] || [];
+      // Get messages or return empty array
+      const messages = this.groupMessages[groupId] || [];
+
+      // Sort messages by timestamp (oldest first for consistent chat display)
+      return [...messages].sort((a, b) =>
+        new Date(a.timestamp) - new Date(b.timestamp)
+      );
     } catch (error) {
       console.error('Error getting group messages:', error);
       return []; // Return empty array instead of throwing
     }
   }
+
 
   /**
    * Get all groups
