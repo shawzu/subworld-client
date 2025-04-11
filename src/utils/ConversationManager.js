@@ -881,46 +881,54 @@ class ConversationManager {
    * Fetch messages for a group
    */
   async fetchGroupMessages(groupId) {
-    if (!subworldNetwork) {
-      throw new Error('Network service not available');
+    if (!subworldNetwork || !groupId) {
+      return [];
     }
-
+  
     try {
       const messages = await subworldNetwork.getGroupMessages(groupId);
-
+  
       // Process and store messages
+      if (!this.groupMessages) {
+        this.groupMessages = {};
+      }
+      
       if (!this.groupMessages[groupId]) {
         this.groupMessages[groupId] = [];
       }
-
+  
+      // Ensure messages is an array
+      const messageArray = Array.isArray(messages) ? messages : [];
+  
       // Convert network messages to our format
-      const processedMessages = messages.map(msg => ({
-        id: msg.id,
-        sender: msg.sender_id,
-        groupId: msg.group_id,
-        content: msg.encrypted_data, // For simplicity, group messages aren't encrypted in this example
-        timestamp: msg.timestamp,
+      const processedMessages = messageArray.map(msg => ({
+        id: msg.id || `msg-${Date.now()}-${Math.random()}`,
+        sender: msg.sender_id || msg.senderID || 'unknown',
+        groupId: msg.group_id || msg.groupID || groupId,
+        content: msg.encrypted_data || msg.encryptedData || '[No content]',
+        timestamp: msg.timestamp || new Date().toISOString(),
         status: 'received',
         isGroupMsg: true
       }));
-
+  
       // Merge with existing messages, avoiding duplicates
       const existingIds = new Set(this.groupMessages[groupId].map(m => m.id));
       const newMessages = processedMessages.filter(m => !existingIds.has(m.id));
-
+  
       if (newMessages.length > 0) {
         this.groupMessages[groupId] = [
           ...this.groupMessages[groupId],
           ...newMessages
         ].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-
+  
         this._persistGroupMessages();
       }
-
+  
       return this.groupMessages[groupId];
     } catch (error) {
       console.error('Error fetching group messages:', error);
-      throw error;
+      // Return empty array instead of throwing
+      return this.groupMessages[groupId] || [];
     }
   }
 
@@ -968,10 +976,58 @@ class ConversationManager {
   }
 
   /**
+ * Refresh a group's information
+ */
+  async refreshGroup(groupId) {
+    if (!groupId || !subworldNetwork) {
+      return null;
+    }
+
+    try {
+      // Fetch updated group info
+      const group = await subworldNetwork.getGroup(groupId);
+
+      // Update local storage
+      if (group) {
+        // Find the group in our list and update it
+        const groupIndex = this.groups.findIndex(g => g.id === groupId);
+        if (groupIndex >= 0) {
+          this.groups[groupIndex] = group;
+        } else {
+          this.groups.push(group);
+        }
+
+        this._persistGroups();
+      }
+
+      return group;
+    } catch (error) {
+      console.error('Error refreshing group:', error);
+      return null;
+    }
+  }
+
+  /**
    * Get messages for a group
    */
   getGroupMessages(groupId) {
-    return this.groupMessages[groupId] || [];
+    if (!groupId) {
+      console.warn('No groupId provided to getGroupMessages');
+      return [];
+    }
+
+    try {
+      // Make sure this.groupMessages exists and has the groupId key
+      if (!this.groupMessages) {
+        this.groupMessages = {};
+      }
+
+      // Return the messages array or an empty array if not found
+      return this.groupMessages[groupId] || [];
+    } catch (error) {
+      console.error('Error getting group messages:', error);
+      return []; // Return empty array instead of throwing
+    }
   }
 
   /**

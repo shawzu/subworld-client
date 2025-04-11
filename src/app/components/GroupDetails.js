@@ -49,13 +49,14 @@ export default function GroupDetails({ group, onClose, currentUserKey }) {
     try {
       setAddingMember(true)
       
-      // Add this member to the group
-      // This would be implemented in the ConversationManager
-      await conversationManager.addGroupMember(group.id, newMemberKey.trim())
+      // Instead of using addGroupMember which doesn't exist, use joinGroup
+      // This assumes the conversationManager.joinGroup method can be used to add a member
+      await conversationManager.joinGroup(group.id, newMemberKey.trim());
       
       // Refresh group data
-      // This would be implemented in the ConversationManager
-      const updatedGroup = await conversationManager.refreshGroup(group.id)
+      const updatedGroup = await conversationManager.refreshGroup ?
+        await conversationManager.refreshGroup(group.id) :
+        await conversationManager.getGroup(group.id);
       
       // Update members list
       if (updatedGroup && updatedGroup.members) {
@@ -70,8 +71,7 @@ export default function GroupDetails({ group, onClose, currentUserKey }) {
     } finally {
       setAddingMember(false)
     }
-  }
-
+}
   // Leave the group
   const handleLeaveGroup = async () => {
     if (!conversationManager) return

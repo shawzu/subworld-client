@@ -24,6 +24,10 @@ import CallButton from '../components/CallButton';
 import CallHandler from '../components/CallHandler';
 import CallMessage from '../components/CallMessage'
 
+import GroupChat from '../components/GroupChat'
+import GroupDetails from '../components/GroupDetails'
+
+
 export default function App() {
   const messagesEndRef = useRef(null)
   const [selectedConversation, setSelectedConversation] = useState(null)
@@ -45,9 +49,36 @@ export default function App() {
   const [selectedFile, setSelectedFile] = useState(null);
   const [showFilePreview, setShowFilePreview] = useState(false);
 
+  const [groups, setGroups] = useState([])
+  const [selectedGroup, setSelectedGroup] = useState(null)
+  const [showGroupDetails, setShowGroupDetails] = useState(false)
+
   // Scroll to bottom of message list
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
+  }
+
+  // Get all conversation previews (direct messages and groups)
+  const getConversationPreviews = () => {
+    const directPreviews = conversationManager ? conversationManager.getConversationPreviews() : [];
+    const groupPreviews = conversationManager ? conversationManager.getGroupPreviews() : [];
+
+    // Combine and sort by most recent message
+    return [...directPreviews, ...groupPreviews].sort((a, b) => {
+      return new Date(b.lastMessageTime) - new Date(a.lastMessageTime);
+    });
+  }
+
+  const handleGroupClick = (groupId) => {
+    if (!conversationManager) return;
+
+    const group = conversationManager.getGroup(groupId);
+    setSelectedGroup(group);
+    setSelectedConversation(null); // Unselect any direct conversation
+
+    if (isMobile) {
+      setShowConversationList(false);
+    }
   }
 
 
@@ -62,10 +93,10 @@ export default function App() {
             console.error('Voice service import returned undefined');
             return;
           }
-          
+
           window.voiceService = voiceService;
           console.log('Voice service loaded globally');
-  
+
           // Initialize voice service
           if (!voiceService.initialized) {
             voiceService.initialize().catch(err => {
@@ -77,7 +108,7 @@ export default function App() {
         });
       }
     };
-  
+
     // Start the service connection process
     setupServices();
   }, []);
@@ -92,13 +123,13 @@ export default function App() {
         alert('Voice service not available. Please try again later.');
         throw new Error('Voice service not available');
       }
-      
+
       // Ensure service is initialized
       if (!window.voiceService.initialized) {
         console.log('Voice service not yet initialized, initializing now...');
         await window.voiceService.initialize();
       }
-      
+
       // Join the call with both call ID and contact public key
       await window.voiceService.joinCall(callId, contactPublicKey);
       return true;
@@ -203,6 +234,15 @@ export default function App() {
           setConversations([]); // Empty fallback
         }
 
+        // Load groups if available
+        if (conversationManager) {
+          try {
+            const groupPreviews = conversationManager.getGroupPreviews();
+            setGroups(groupPreviews);
+          } catch (err) {
+            console.error('Error loading groups:', err);
+          }
+        }
         setIsLoading(false);
       } catch (error) {
         console.error('Error initializing app:', error);
@@ -261,6 +301,11 @@ export default function App() {
       if (newMessageCount > 0) {
         setHasNewMessages(true);
         setTimeout(() => setHasNewMessages(false), 3000);
+      }
+
+      if (conversationManager) {
+        const groupPreviews = conversationManager.getGroupPreviews();
+        setGroups(groupPreviews);
       }
 
       setRefreshing(false);
@@ -399,9 +444,43 @@ export default function App() {
     }
   }
 
+  const handleCreateGroup = async (groupData) => {
+    if (!conversationManager) {
+      alert('Service not available. Please try again later.');
+      return;
+    }
+
+    try {
+      // Create the group through the conversation manager
+      const group = await conversationManager.createGroup(
+        groupData.name,
+        groupData.description,
+        groupData.members
+      );
+
+      // Update local state
+      setGroups([...groups, group]);
+
+      // Select the new group
+      setSelectedGroup(group);
+      setSelectedConversation(null);
+
+      // Switch to mobile view if needed
+      if (isMobile) {
+        setShowConversationList(false);
+      }
+
+      return group;
+    } catch (error) {
+      console.error('Error creating group:', error);
+      throw error;
+    }
+  }
+
   // Select a conversation
   const handleConversationClick = (contactPublicKey) => {
     setSelectedConversation(contactPublicKey);
+    setSelectedGroup(null);
     setActiveTab('messages');
     if (isMobile) {
       setShowConversationList(false);
@@ -411,6 +490,7 @@ export default function App() {
   // Go back to conversation list (mobile)
   const handleBackToList = () => {
     setShowConversationList(true);
+    setSelectedGroup(null);
   }
 
   // Change active tab
@@ -623,44 +703,45 @@ export default function App() {
             </div>
           ) : (
             <div className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-gray-700 scrollbar-track-gray-900">
-              {conversations.length === 0 ? (
-                <div className="text-center text-gray-500 p-6">
-                  <p className="mb-2">No conversations yet</p>
-                  <p className="text-sm">Start a new conversation to begin messaging</p>
-                </div>
-              ) : (
-                conversations.map((conv) => (
-                  <motion.div
-                    key={conv.contactPublicKey}
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
-                    onClick={() => handleConversationClick(conv.contactPublicKey)}
-                    className={`p-5 hover:bg-gray-800 rounded-lg mx-4 my-3 cursor-pointer transition duration-300 ${selectedConversation === conv.contactPublicKey ? 'bg-gray-800' : ''}`}
-                  >
-                    <div className="flex items-center">
-                      <div className="w-12 h-12 rounded-full bg-blue-500 flex items-center justify-center mr-4 flex-shrink-0">
-                        {conv.contactName && conv.contactName[0].toUpperCase()}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="font-semibold text-lg truncate flex items-center">
-                          {conv.contactName}
-                          {conv.unreadCount > 0 && (
-                            <span className="ml-2 bg-blue-600 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
-                              {conv.unreadCount}
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-sm text-gray-400 flex justify-between mt-1">
-                          <span className="truncate mr-2 flex-1">{conv.lastMessage}</span>
-                          <span className="whitespace-nowrap flex-shrink-0">
-                            {formatMessageTime(conv.lastMessageTime)}
+              {getConversationPreviews().map((conv) => (
+                <motion.div
+                  key={conv.id || conv.contactPublicKey}
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={() => {
+                    if (conv.isGroup) {
+                      handleGroupClick(conv.id);
+                    } else {
+                      handleConversationClick(conv.contactPublicKey);
+                    }
+                  }}
+                  className={`p-5 hover:bg-gray-800 rounded-lg mx-4 my-3 cursor-pointer transition duration-300 ${(selectedConversation === conv.contactPublicKey || selectedGroup?.id === conv.id) ? 'bg-gray-800' : ''
+                    }`}
+                >
+                  <div className="flex items-center">
+                    <div className="w-12 h-12 rounded-full bg-blue-500 flex items-center justify-center mr-4 flex-shrink-0">
+                      {conv.isGroup ? <Users size={20} className="text-white" /> :
+                        (conv.contactName && conv.contactName[0].toUpperCase())}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="font-semibold text-lg truncate flex items-center">
+                        {conv.isGroup ? conv.name : conv.contactName}
+                        {conv.unreadCount > 0 && (
+                          <span className="ml-2 bg-blue-600 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
+                            {conv.unreadCount}
                           </span>
-                        </div>
+                        )}
+                      </div>
+                      <div className="text-sm text-gray-400 flex justify-between mt-1">
+                        <span className="truncate mr-2 flex-1">{conv.lastMessage}</span>
+                        <span className="whitespace-nowrap flex-shrink-0">
+                          {formatMessageTime(conv.lastMessageTime)}
+                        </span>
                       </div>
                     </div>
-                  </motion.div>
-                ))
-              )}
+                  </div>
+                </motion.div>
+              ))}
             </div>
           )}
         </div>
@@ -758,6 +839,35 @@ export default function App() {
                   </div>
                 </form>
               </>
+            )}
+
+            {/* Group Chat */}
+            {activeTab === 'messages' && selectedGroup && !selectedConversation && (
+              <GroupChat
+                group={selectedGroup}
+                onBack={handleBackToList}
+                formatMessageTime={formatMessageTime}
+                currentUserKey={publicKey}
+                onOpenGroupDetails={() => setShowGroupDetails(true)}
+              />
+            )}
+            {/* Group Details Modal */}
+            {showGroupDetails && selectedGroup && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+                <GroupDetails
+                  group={selectedGroup}
+                  onClose={(groupLeft) => {
+                    setShowGroupDetails(false);
+                    if (groupLeft) {
+                      setSelectedGroup(null);
+                      if (isMobile) {
+                        setShowConversationList(true);
+                      }
+                    }
+                  }}
+                  currentUserKey={publicKey}
+                />
+              </div>
             )}
 
             {showFilePreview && (
@@ -1096,6 +1206,7 @@ export default function App() {
           isOpen={showNewConversationModal}
           onClose={() => setShowNewConversationModal(false)}
           onSubmit={handleNewConversationSubmit}
+          onCreateGroup={handleCreateGroup}
         />
 
 
