@@ -670,76 +670,28 @@ class ConversationManager {
   }
 
   /**
-  * Get conversation preview data (for conversation list)
-  * @returns {Array} - Array of conversation previews
-  */
+ * Get conversation preview data (for conversation list)
+ * @returns {Array} - Array of conversation previews
+ */
   getConversationPreviews() {
-    // Direct message conversations
+    // Direct message conversations only - explicitly filter out any potential groups
     const directPreviews = this.conversations.map(conversation => {
       const contact = contactStore?.getContact(conversation.contactPublicKey);
       const lastMessage = this._getLastMessage(conversation);
 
       return {
-        id: `direct-${conversation.id || conversation.contactPublicKey}`, // Prefix to ensure uniqueness
+        id: `direct-${conversation.id || conversation.contactPublicKey}`, // Prefix for uniqueness
         contactPublicKey: conversation.contactPublicKey,
         contactName: contact?.alias || conversation.contactPublicKey,
         lastMessage: lastMessage?.content || '',
         lastMessageTime: lastMessage?.timestamp || conversation.createdAt,
         unreadCount: conversation.unreadCount || 0,
-        isOnline: false, // Would be determined by network connectivity
+        isOnline: false,
         isGroup: false // Explicitly mark as not a group
       };
     });
 
-    // Group conversations
-    const groupPreviews = this.groups.map(group => {
-      // Get messages for this group
-      const messages = this.groupMessages[group.id] || [];
-
-      // Find last message - sort by timestamp (newest first)
-      const sortedMessages = [...messages].sort(
-        (a, b) => new Date(b.timestamp) - new Date(a.timestamp)
-      );
-
-      const lastMessage = sortedMessages.length > 0 ? sortedMessages[0] : null;
-
-
-      const lastReadTimestamp = group.lastReadTimestamp || 0;
-      const unreadCount = messages.filter(msg =>
-        msg.sender !== this.currentUserKey &&
-        new Date(msg.timestamp) > new Date(lastReadTimestamp)
-      ).length;
-
-      return {
-        id: `group-${group.id}`,
-        groupId: group.id,
-        name: group.name,
-        description: group.description,
-        members: group.members?.length || 0,
-        isAdmin: group.admins?.includes(this.currentUserKey),
-        lastMessage: lastMessage ? lastMessage.content : '',
-        lastMessageTime: lastMessage ? lastMessage.timestamp : group.created,
-        unreadCount: unreadCount,
-        avatar: group.avatar || null,
-        isGroup: true
-      };
-    });
-
-    // Combine and sort by last message time, newest first
-    const combined = [...directPreviews, ...groupPreviews];
-
-    return combined.sort((a, b) => {
-      // Handle potentially missing timestamps
-      const timeA = a.lastMessageTime ? new Date(a.lastMessageTime) : new Date(0);
-      const timeB = b.lastMessageTime ? new Date(b.lastMessageTime) : new Date(0);
-
-      // Check for valid dates
-      if (isNaN(timeA.getTime()) || isNaN(timeB.getTime())) {
-        return 0; // Keep order unchanged for invalid dates
-      }
-
-      return timeB - timeA; // Newest first
-    });
+    return directPreviews;
   }
 
   markGroupAsRead(groupId) {
@@ -927,29 +879,29 @@ class ConversationManager {
     if (!subworldNetwork) {
       throw new Error('Network service not available');
     }
-  
+
     try {
       const result = await subworldNetwork.createGroup(name, description, members);
       if (!result.success) {
         throw new Error('Failed to create group');
       }
-  
+
 
       const group = await subworldNetwork.getGroup(result.groupId);
-  
+
 
       const existingGroupIndex = this.groups.findIndex(g => g.id === group.id);
-      
+
       if (existingGroupIndex >= 0) {
-    
+
         this.groups[existingGroupIndex] = group;
       } else {
-       
+
         this.groups.push(group);
       }
-      
+
       this._persistGroups();
-  
+
       return group;
     } catch (error) {
       console.error('Error creating group:', error);
@@ -1260,23 +1212,51 @@ class ConversationManager {
 
   // Get group preview data (for group list)
   getGroupPreviews() {
-    return this.groups.map(group => {
-      const messages = this.groupMessages[group.id] || [];
-      const lastMessage = messages.length > 0 ?
-        messages.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))[0] : null;
+    if (!this.groups || !Array.isArray(this.groups)) {
+      console.log("Groups not available or invalid format");
+      return [];
+    }
 
+    // Debug: log the current groups
+    console.log(`getGroupPreviews: Found ${this.groups.length} groups`);
+
+    // Filter out any invalid groups
+    const validGroups = this.groups.filter(group =>
+      group && typeof group === 'object' && group.id);
+
+    if (validGroups.length !== this.groups.length) {
+      console.log(`Filtered out ${this.groups.length - validGroups.length} invalid groups`);
+    }
+
+    // Get previews with consistent IDs
+    return validGroups.map(group => {
+      // Get the group's messages
+      const messages = this.groupMessages[group.id] || [];
+
+      // Find the last message
+      const sortedMessages = [...messages].sort(
+        (a, b) => new Date(b.timestamp) - new Date(a.timestamp)
+      );
+      const lastMessage = sortedMessages.length > 0 ? sortedMessages[0] : null;
+
+      // Return a clean group preview
       return {
-        id: group.id,
-        name: group.name,
-        description: group.description,
-        members: group.members.length,
-        isAdmin: group.admins.includes(this.currentUserKey),
-        lastMessage: lastMessage?.content || '',
-        lastMessageTime: lastMessage?.timestamp || group.created,
+        id: group.id, // Use the ID exactly as stored
+        name: group.name || 'Unnamed Group',
+        description: group.description || '',
+        members: Array.isArray(group.members) ? group.members.length : 0,
+        isAdmin: Array.isArray(group.admins) ? group.admins.includes(this.currentUserKey) : false,
+        lastMessage: lastMessage ? lastMessage.content : '',
+        lastMessageTime: lastMessage ? lastMessage.timestamp : group.created,
         avatar: group.avatar || null,
-        isGroup: true
+        isGroup: true // Explicitly mark as a group
       };
-    }).sort((a, b) => new Date(b.lastMessageTime) - new Date(a.lastMessageTime));
+    }).sort((a, b) => {
+      // Sort by last message time, newest first
+      const timeA = a.lastMessageTime ? new Date(a.lastMessageTime) : new Date(0);
+      const timeB = b.lastMessageTime ? new Date(b.lastMessageTime) : new Date(0);
+      return timeB - timeA;
+    });
   }
 
 }

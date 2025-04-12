@@ -60,26 +60,61 @@ export default function App() {
 
   // Get all conversation previews (direct messages and groups)
   const getConversationPreviews = () => {
-    const directPreviews = conversationManager ? conversationManager.getConversationPreviews() : [];
-    const groupPreviews = conversationManager ? conversationManager.getGroupPreviews() : [];
 
-    // Combine and sort by most recent message
-    return [...directPreviews, ...groupPreviews].sort((a, b) => {
-      return new Date(b.lastMessageTime) - new Date(a.lastMessageTime);
+    const directPreviews = conversationManager ?
+      conversationManager.getConversationPreviews().filter(conv => !conv.isGroup) : [];
+
+
+    const groupPreviews = conversationManager ?
+      conversationManager.getGroupPreviews() : [];
+
+
+    const allConversations = [...directPreviews, ...groupPreviews];
+
+
+    return allConversations.sort((a, b) => {
+      const timeA = a.lastMessageTime ? new Date(a.lastMessageTime) : new Date(0);
+      const timeB = b.lastMessageTime ? new Date(b.lastMessageTime) : new Date(0);
+      return timeB - timeA;
     });
-  }
+  };
 
   const handleGroupClick = (groupId) => {
     if (!conversationManager) return;
 
-    const group = conversationManager.getGroup(groupId);
+    console.log("Handling group click for ID:", groupId);
+
+    // Try to find the group with the exact ID first
+    let group = conversationManager.getGroup(groupId);
+
+    // If not found and ID has a prefix, try without the prefix
+    if (!group && groupId.startsWith('group-')) {
+      const unprefixedId = groupId.substring(6);
+      group = conversationManager.getGroup(unprefixedId);
+      console.log("Trying unprefixed ID:", unprefixedId, "Found:", !!group);
+    }
+
+    // If still not found and ID doesn't have a prefix, try with the prefix
+    if (!group && !groupId.startsWith('group-')) {
+      const prefixedId = `group-${groupId}`;
+      group = conversationManager.getGroup(prefixedId);
+      console.log("Trying prefixed ID:", prefixedId, "Found:", !!group);
+    }
+
+    // If we still don't have a group, error and cleanup
+    if (!group) {
+      console.error(`Group with ID ${groupId} not found`);
+      return;
+    }
+
+    // Set the selected group and update UI
     setSelectedGroup(group);
-    setSelectedConversation(null); // Unselect any direct conversation
+    setSelectedConversation(null);
 
     if (isMobile) {
       setShowConversationList(false);
     }
-  }
+  };
 
 
   useEffect(() => {
@@ -443,30 +478,38 @@ export default function App() {
       alert('Failed to send message. Please try again.');
     }
   }
-
   const handleCreateGroup = async (groupData) => {
     if (!conversationManager) {
       alert('Service not available. Please try again later.');
       return;
     }
-  
+
     try {
-  
+      // Create the group
       const group = await conversationManager.createGroup(
         groupData.name,
         groupData.description,
         groupData.members
       );
-  
-   
+
+      // Reload all data
+      if (conversationManager) {
+        await conversationManager.fetchGroups();
+        const groupPreviews = conversationManager.getGroupPreviews();
+        setGroups(groupPreviews);
+      }
+
+      // Update the conversations list
+      setConversations(getConversationPreviews());
+
+      // Select the newly created group
       setSelectedGroup(group);
       setSelectedConversation(null);
-  
- 
+
       if (isMobile) {
         setShowConversationList(false);
       }
-  
+
       return group;
     } catch (error) {
       console.error('Error creating group:', error);
@@ -702,7 +745,7 @@ export default function App() {
             <div className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-gray-700 scrollbar-track-gray-900">
               {getConversationPreviews().map((conv) => (
                 <motion.div
-                  key={conv.id || conv.contactPublicKey}
+                  key={conv.isGroup ? `group-${conv.id}` : `conv-${conv.contactPublicKey}`}
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
                   onClick={() => {
@@ -712,7 +755,8 @@ export default function App() {
                       handleConversationClick(conv.contactPublicKey);
                     }
                   }}
-                  className={`p-5 hover:bg-gray-800 rounded-lg mx-4 my-3 cursor-pointer transition duration-300 ${(selectedConversation === conv.contactPublicKey || selectedGroup?.id === conv.id) ? 'bg-gray-800' : ''
+                  className={`p-5 hover:bg-gray-800 rounded-lg mx-4 my-3 cursor-pointer transition duration-300 ${(selectedConversation === conv.contactPublicKey ||
+                      (selectedGroup && selectedGroup.id === conv.id)) ? 'bg-gray-800' : ''
                     }`}
                 >
                   <div className="flex items-center">
