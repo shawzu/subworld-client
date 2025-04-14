@@ -5,6 +5,7 @@ import { Users, Send, ArrowLeft, Settings } from 'lucide-react'
 import contactStore from '../../utils/ContactStore'
 import conversationManager from '../../utils/ConversationManager'
 import { Upload } from 'lucide-react'
+import GroupCallButton from './GroupCallButton'
 
 export default function GroupChat({
     group,
@@ -173,9 +174,45 @@ export default function GroupChat({
     const getContactName = (publicKeyStr) => {
         if (!contactStore || publicKeyStr === currentUserKey) return publicKeyStr === currentUserKey ? 'You' : publicKeyStr
 
-        const contact = contactStore.getContact(publicKeyStr)
-        return contact?.alias || publicKeyStr
+        const contact = contactStore.getContact(publicKeyStr);
+        return contact?.alias || publicKeyStr;
     }
+
+    // Handle initiating a group call
+    const handleInitiateGroupCall = (groupId, groupName, members) => {
+        console.log('Initiating group call for:', groupId, groupName, members);
+        
+        if (typeof window === 'undefined' || !window.voiceService) {
+            console.error('Voice service not available');
+            alert('Voice service not available. Please try again later.');
+            return;
+        }
+        
+        try {
+            // Ensure the voice service is initialized
+            if (!window.voiceService.initialized) {
+                console.log('Voice service not yet initialized, initializing now...');
+                window.voiceService.initialize().then(() => {
+                    // After initialization, start the group call
+                    window.voiceService.initiateGroupCall(groupId, groupName, members)
+                        .catch(error => {
+                            console.error('Failed to initiate group call:', error);
+                            alert('Could not start the group call. Please try again.');
+                        });
+                });
+            } else {
+                // Voice service is ready, start the group call
+                window.voiceService.initiateGroupCall(groupId, groupName, members)
+                    .catch(error => {
+                        console.error('Failed to initiate group call:', error);
+                        alert('Could not start the group call. Please try again.');
+                    });
+            }
+        } catch (error) {
+            console.error('Error in handleInitiateGroupCall:', error);
+            alert('An error occurred while trying to start the group call. Please try again.');
+        }
+    };
 
     // Send a message
     const handleSendMessage = async (e) => {
@@ -238,12 +275,20 @@ export default function GroupChat({
                         </div>
                     </div>
                 </div>
-                <button
-                    onClick={onOpenGroupDetails}
-                    className="p-2 rounded-full hover:bg-gray-700"
-                >
-                    <Settings size={20} />
-                </button>
+                <div className="flex items-center space-x-2">
+                    {/* Add the group call button */}
+                    <GroupCallButton 
+                        group={group}
+                        onInitiateGroupCall={handleInitiateGroupCall}
+                    />
+                    
+                    <button
+                        onClick={onOpenGroupDetails}
+                        className="p-2 rounded-full hover:bg-gray-700"
+                    >
+                        <Settings size={20} />
+                    </button>
+                </div>
             </div>
 
             {/* Messages */}

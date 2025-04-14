@@ -3,9 +3,10 @@
 import { useState, useEffect, useRef } from 'react'
 import contactStore from '../../utils/ContactStore'
 import CallUI from './CallUI'
+import GroupCallUI from './GroupCallUI'
 
 /**
- * CallHandler component manages voice calls and renders the CallUI
+ * CallHandler component manages voice calls and renders the appropriate UI
  */
 const CallHandler = () => {
   const [callState, setCallState] = useState(null)
@@ -15,6 +16,13 @@ const CallHandler = () => {
   const [callDuration, setCallDuration] = useState(0)
   const [isOutgoing, setIsOutgoing] = useState(false)
   const [connectionAttempts, setConnectionAttempts] = useState(0)
+  
+  // Group call specific states
+  const [isGroupCall, setIsGroupCall] = useState(false)
+  const [groupName, setGroupName] = useState('')
+  const [groupId, setGroupId] = useState(null)
+  const [groupMembers, setGroupMembers] = useState([])
+  const [participants, setParticipants] = useState([])
 
   // Refs for audio elements
   const localAudioRef = useRef(null)
@@ -128,10 +136,37 @@ const CallHandler = () => {
               setIsOutgoing(data.outgoing);
             }
 
-            // Set contact name if available
-            if (data.contact && contactStore) {
-              const contact = contactStore.getContact(data.contact);
-              setContactName(contact?.alias || data.contact || 'Call');
+            // Track if this is a group call
+            if (data.isGroup !== undefined) {
+              setIsGroupCall(data.isGroup);
+            }
+
+            // Handle group call specific data
+            if (data.isGroup) {
+              setGroupId(data.groupId);
+              setGroupName(data.groupName || 'Group Call');
+              
+              if (data.members) {
+                setGroupMembers(data.members);
+                
+                // Transform members into participants format for UI
+                const initialParticipants = data.members.map(memberId => {
+                  const contact = contactStore?.getContact(memberId);
+                  return {
+                    id: memberId,
+                    name: contact?.alias || memberId,
+                    isActive: true,
+                    isMuted: false
+                  };
+                });
+                setParticipants(initialParticipants);
+              }
+            } else {
+              // For direct calls, set contact name
+              if (data.contact && contactStore) {
+                const contact = contactStore.getContact(data.contact);
+                setContactName(contact?.alias || data.contact || 'Call');
+              }
             }
 
             // Start or stop timers based on call state
@@ -156,6 +191,11 @@ const CallHandler = () => {
                 });
                 setCallDuration(0);
                 setConnectionAttempts(0);
+                setIsGroupCall(false);
+                setGroupName('');
+                setGroupId(null);
+                setGroupMembers([]);
+                setParticipants([]);
               }, 3000);
             }
             break;
@@ -245,6 +285,61 @@ const CallHandler = () => {
             // Track connection attempts
             if (data.attempt) {
               setConnectionAttempts(data.attempt);
+            }
+            break;
+            
+          case 'participant_joined':
+            // Add new participant to the list
+            if (isGroupCall && data.participant) {
+              setParticipants(prev => {
+                // Check if this participant already exists
+                if (prev.some(p => p.id === data.participant)) {
+                  return prev;
+                }
+                
+                // Add the new participant
+                const contact = contactStore?.getContact(data.participant);
+                const newParticipant = {
+                  id: data.participant,
+                  name: contact?.alias || data.participant,
+                  isActive: true,
+                  isMuted: false
+                };
+                return [...prev, newParticipant];
+              });
+            }
+            break;
+            
+          case 'participant_left':
+            // Remove participant from the list
+            if (isGroupCall && data.participant) {
+              setParticipants(prev => 
+                prev.filter(p => p.id !== data.participant)
+              );
+            }
+            break;
+            
+          case 'participant_stream_added':
+            // Update participant status when their stream is added
+            if (isGroupCall && data.participant) {
+              setParticipants(prev => 
+                prev.map(p => p.id === data.participant 
+                  ? { ...p, isActive: true } 
+                  : p
+                )
+              );
+            }
+            break;
+            
+          case 'participant_mute_changed':
+            // Update participant mute status
+            if (isGroupCall && data.participant) {
+              setParticipants(prev => 
+                prev.map(p => p.id === data.participant 
+                  ? { ...p, isMuted: data.isMuted } 
+                  : p
+                )
+              );
             }
             break;
         }
@@ -389,21 +484,37 @@ const CallHandler = () => {
 
       {/* Don't render call UI if no call */}
       {callState && (
-        <CallUI
-          callState={callState}
-          contactName={contactName}
-          onHangUp={handleHangUp}
-          onToggleMute={handleToggleMute}
-          onAnswerCall={handleAnswerCall}
-          onRejectCall={handleRejectCall}
-          isMuted={isMuted}
-          callDuration={formatDuration(callDuration)}
-          isOutgoing={isOutgoing}
-          connectionAttempts={connectionAttempts}
-        />
+        isGroupCall ? (
+          <GroupCallUI
+            callState={callState}
+            groupName={groupName}
+            participants={participants}
+            onHangUp={handleHangUp}
+            onToggleMute={handleToggleMute}
+            onAnswerCall={handleAnswerCall}
+            onRejectCall={handleRejectCall}
+            isMuted={isMuted}
+            callDuration={formatDuration(callDuration)}
+            isOutgoing={isOutgoing}
+            connectionAttempts={connectionAttempts}
+          />
+        ) : (
+          <CallUI
+            callState={callState}
+            contactName={contactName}
+            onHangUp={handleHangUp}
+            onToggleMute={handleToggleMute}
+            onAnswerCall={handleAnswerCall}
+            onRejectCall={handleRejectCall}
+            isMuted={isMuted}
+            callDuration={formatDuration(callDuration)}
+            isOutgoing={isOutgoing}
+            connectionAttempts={connectionAttempts}
+          />
+        )
       )}
     </>
   );
-};
+}
 
 export default CallHandler;

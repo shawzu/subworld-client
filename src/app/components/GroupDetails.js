@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { X, Users, UserMinus, UserPlus, Settings, LogOut, Trash2 } from 'lucide-react'
+import { X, Users, UserMinus, UserPlus, Settings, LogOut, Trash2, Phone } from 'lucide-react'
 import contactStore from '../../utils/ContactStore'
 import conversationManager from '../../utils/ConversationManager'
 
@@ -12,6 +12,7 @@ export default function GroupDetails({ group, onClose, currentUserKey }) {
   const [newMemberKey, setNewMemberKey] = useState('')
   const [addingMember, setAddingMember] = useState(false)
   const [confirmLeave, setConfirmLeave] = useState(false)
+  const [initiatingCall, setInitiatingCall] = useState(false)
 
   useEffect(() => {
     if (!group) return
@@ -89,6 +90,39 @@ export default function GroupDetails({ group, onClose, currentUserKey }) {
     }
   }
 
+  // Start a group call
+  const handleStartGroupCall = async () => {
+    if (initiatingCall) return;
+    
+    setInitiatingCall(true);
+    
+    try {
+      if (typeof window === 'undefined' || !window.voiceService) {
+        throw new Error('Voice service not available');
+      }
+      
+      // Ensure service is initialized
+      if (!window.voiceService.initialized) {
+        await window.voiceService.initialize();
+      }
+      
+      // Start the group call
+      await window.voiceService.initiateGroupCall(
+        group.id,
+        group.name || 'Group Call',
+        group.members || []
+      );
+      
+      // Close the details panel
+      onClose(false);
+    } catch (error) {
+      console.error('Failed to start group call:', error);
+      alert('Could not start the group call. Please try again.');
+    } finally {
+      setInitiatingCall(false);
+    }
+  };
+
   return (
     <div className="bg-gray-800 rounded-lg shadow-lg overflow-hidden w-full max-w-lg max-h-[80vh] flex flex-col">
       {/* Header */}
@@ -115,6 +149,25 @@ export default function GroupDetails({ group, onClose, currentUserKey }) {
               <p className="text-gray-400 mt-2">{group.description}</p>
             )}
             <p className="text-sm text-gray-500 mt-3">Created {new Date(group.created).toLocaleDateString()}</p>
+            
+            {/* Group Call Button */}
+            <button
+              onClick={handleStartGroupCall}
+              disabled={initiatingCall}
+              className="mt-4 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg flex items-center justify-center mx-auto transition-colors disabled:bg-green-800 disabled:cursor-not-allowed"
+            >
+              {initiatingCall ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-t-transparent border-white rounded-full animate-spin mr-2"></div>
+                  Starting Call...
+                </>
+              ) : (
+                <>
+                  <Phone size={16} className="mr-2" />
+                  Start Group Call
+                </>
+              )}
+            </button>
           </div>
           
           {/* Members Section */}
@@ -222,5 +275,5 @@ export default function GroupDetails({ group, onClose, currentUserKey }) {
         )}
       </div>
     </div>
-  )
+  );
 }

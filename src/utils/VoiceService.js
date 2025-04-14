@@ -4,8 +4,8 @@ import { io } from 'socket.io-client';
 import Peer from 'peerjs';
 
 /**
- * VoiceService - Handles voice calls using Socket.io for signaling and Peer.js for WebRTC
- * With improved audio streaming between WiFi and mobile networks
+ * Enhanced VoiceService - Now with group call support
+ * Handles voice calls using Socket.io for signaling and Peer.js for WebRTC
  */
 class VoiceService {
   constructor() {
@@ -16,14 +16,20 @@ class VoiceService {
     this.listeners = [];
     this.remoteUserKey = null;
 
+    // Group call properties
+    this.isGroupCall = false;
+    this.groupId = null;
+    this.groupMembers = [];
+    this.groupParticipants = new Map(); // Map of publicKey -> {stream, connection}
+    this.localStream = null;
+
     // Socket.io connection
     this.socket = null;
 
     // PeerJS instance
     this.peer = null;
-    this.localStream = null;
+    this.peerConnections = new Map(); // Map for multiple connections in group calls
     this.remoteStream = null;
-    this.peerConnection = null;
 
     // Current user's public key
     this.userPublicKey = null;
@@ -39,7 +45,7 @@ class VoiceService {
 
     // Connection attempts and tracking
     this.currentConnectionAttempt = 0;
-    this.maxConnectionAttempts = 8; // Increased from 5 to 8 for more retries
+    this.maxConnectionAttempts = 8;
 
     // Detect network type
     this.networkType = 'unknown';
@@ -64,16 +70,7 @@ class VoiceService {
           { urls: 'stun:stun3.l.google.com:19302' },
           { urls: 'stun:stun4.l.google.com:19302' },
 
-          // Primary TURN servers with multiple transport options
-          /*
-          {
-            urls: [
-              'turn:134.209.228.151:3478?transport=udp',
-              'turn:134.209.228.151:3478?transport=tcp'
-            ],
-            username: 'subworlduser',
-            credential: 'subworldpass'
-          }*/
+          // TURN servers with multiple transport options
           {
             urls: [
               'turn:relay1.expressturn.com:3478'
@@ -188,142 +185,8 @@ class VoiceService {
   }
 
   /**
-   * Detect and monitor network type
-   */
-  _detectNetworkType() {
-    try {
-      const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
-      const userAgent = navigator.userAgent.toLowerCase();
-
-      // Multiple detection methods
-      const isCellular = connection?.type === 'cellular';
-      const isUserAgentMobile = /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini/i.test(userAgent);
-      const isEffectiveTypeSlow = connection?.effectiveType === 'slow-2g' ||
-        connection?.effectiveType === '2g' ||
-        connection?.effectiveType === '3g';
-
-      this.isMobileNetwork = isCellular || isUserAgentMobile || isEffectiveTypeSlow;
-      this.networkType = this.isMobileNetwork ? 'mobile' : 'wifi';
-
-      this.log(`Comprehensive Network Detection:
-        Cellular Connection: ${isCellular}
-        User Agent Mobile: ${isUserAgentMobile}
-        Slow Network Type: ${isEffectiveTypeSlow}
-        Final Network Type: ${this.networkType}
-      `);
-    } catch (error) {
-      console.error('Advanced network detection failed:', error);
-    }
-  }
-
-  // More robust TURN server configuration
-  _fetchTurnCredentials() {
-    const mobileTurnServers = [
-      {
-        urls: [
-          'turn:relay1.expressturn.com:3478',
-        ],
-        username: 'efQX0LFAL6X57HSHIV',
-        credential: 'EUOrSrU4chhCfoRT'
-      }
-      
-    ];
-
-    const wifiTurnServers = [
-      // Higher quality TURN servers for stable connections
-    ];
-
-    this.peerConfig.config.iceServers = this.isMobileNetwork
-      ? mobileTurnServers
-      : wifiTurnServers;
-  }
-
-  // Adaptive connection retry with mobile optimization
-  _initiateWebRTCConnection() {
-    const mobileConnectionStrategy = {
-      baseTimeout: 5000,
-      maxAttempts: 10,
-      backoffFactor: 1.5,
-      jitterFactor: 0.3
-    };
-
-    const wifiConnectionStrategy = {
-      baseTimeout: 3000,
-      maxAttempts: 5,
-      backoffFactor: 1.2,
-      jitterFactor: 0.2
-    };
-
-    const strategy = this.isMobileNetwork
-      ? mobileConnectionStrategy
-      : wifiConnectionStrategy;
-
-    // Implement exponential backoff with jitter for more resilient mobile connections
-    const calculateRetryDelay = (attempt) => {
-      const baseDelay = strategy.baseTimeout * Math.pow(strategy.backoffFactor, attempt);
-      const jitter = baseDelay * strategy.jitterFactor * (Math.random() * 2 - 1);
-      return baseDelay + jitter;
-    };
-  }
-
-  /**
-   * Adjust audio settings based on network type
-   * Called when network changes during a call
-   */
-  _adjustAudioForNetwork() {
-    if (!this.peerConnection || !this.callState === 'connected') return;
-
-    try {
-      const rtcPeerConn = this.peerConnection.peerConnection;
-      if (!rtcPeerConn) return;
-
-      // Get all RTCRtpSenders that are sending audio
-      const audioSenders = rtcPeerConn.getSenders().filter(sender =>
-        sender.track && sender.track.kind === 'audio'
-      );
-
-      if (audioSenders.length === 0) return;
-
-      audioSenders.forEach(sender => {
-        // Get current parameters
-        const parameters = sender.getParameters();
-
-        // Clone the parameters to modify
-        if (parameters.encodings && parameters.encodings.length > 0) {
-          // On mobile, reduce bitrate and prioritize reliability
-          if (this.isMobileNetwork) {
-            parameters.encodings.forEach(encoding => {
-              // Lower bitrate for mobile networks
-              encoding.maxBitrate = 24000; // 24 kbps
-              encoding.priority = 'high';
-            });
-          } else {
-            // On WiFi, allow higher quality
-            parameters.encodings.forEach(encoding => {
-              // Higher bitrate for WiFi
-              encoding.maxBitrate = 48000; // 48 kbps
-              encoding.priority = 'high';
-            });
-          }
-
-          // Apply the modified parameters
-          sender.setParameters(parameters)
-            .then(() => {
-              this.log('Successfully adjusted audio parameters for network type:', this.networkType);
-            })
-            .catch(err => {
-              console.warn('Failed to adjust audio parameters:', err);
-            });
-        }
-      });
-    } catch (err) {
-      console.warn('Error adjusting audio for network:', err);
-    }
-  }
-
-  /**
-   * Set up socket event listeners
-   */
+ * Set up socket event listeners - Extended for group calls
+ */
   _setupSocketListeners() {
     if (!this.socket) return;
 
@@ -336,6 +199,7 @@ class VoiceService {
       this.callId = data.callId;
       this.remoteUserKey = data.caller;
       this.isOutgoingCall = false;
+      this.isGroupCall = false;
 
       // Update call state
       this.callState = 'ringing';
@@ -343,7 +207,32 @@ class VoiceService {
         state: 'ringing',
         contact: data.caller,
         callId: data.callId,
-        outgoing: false
+        outgoing: false,
+        isGroup: false
+      });
+    });
+
+    // New: Handle incoming group call
+    this.socket.on('incoming_group_call', (data) => {
+      this.log('Incoming group call:', data);
+      this.callId = data.callId;
+      this.remoteUserKey = data.caller;
+      this.isOutgoingCall = false;
+      this.isGroupCall = true;
+      this.groupId = data.groupId;
+      this.groupMembers = data.members || [];
+
+      // Update call state
+      this.callState = 'ringing';
+      this._notifyListeners('call_state_changed', {
+        state: 'ringing',
+        contact: data.caller,
+        callId: data.callId,
+        outgoing: false,
+        isGroup: true,
+        groupId: data.groupId,
+        groupName: data.groupName || 'Group Call',
+        members: data.members || []
       });
     });
 
@@ -356,14 +245,16 @@ class VoiceService {
         this._notifyListeners('call_state_changed', {
           state: 'ringing',
           contact: this.remoteUserKey,
-          outgoing: this.isOutgoingCall
+          outgoing: this.isOutgoingCall,
+          isGroup: this.isGroupCall
         });
       } else if (data.status === 'failed') {
         this.callState = 'ended';
         this._notifyListeners('call_state_changed', {
           state: 'ended',
           contact: this.remoteUserKey,
-          reason: data.reason
+          reason: data.reason,
+          isGroup: this.isGroupCall
         });
 
         // Clean up after a short delay
@@ -379,7 +270,8 @@ class VoiceService {
         this.callState = 'connecting';
         this._notifyListeners('call_state_changed', {
           state: 'connecting',
-          contact: data.recipient
+          contact: data.recipient,
+          isGroup: this.isGroupCall
         });
 
         // Start the WebRTC connection process
@@ -390,11 +282,63 @@ class VoiceService {
         this._notifyListeners('call_state_changed', {
           state: 'ended',
           contact: data.recipient,
-          reason: 'rejected'
+          reason: 'rejected',
+          isGroup: this.isGroupCall
         });
 
         // Clean up after a short delay
         setTimeout(() => this._cleanupCall(), 3000);
+      }
+    });
+
+    // New: Group call participant joined
+    this.socket.on('group_call_participant_joined', (data) => {
+      this.log('Group call participant joined:', data);
+
+      if (this.isGroupCall && this.callId === data.callId) {
+        // Add participant to tracking
+        if (!this.groupParticipants.has(data.participant)) {
+          this.groupParticipants.set(data.participant, { connected: false });
+
+          // Notify listeners
+          this._notifyListeners('participant_joined', {
+            participant: data.participant,
+            callId: data.callId
+          });
+
+          // If we're already connected and not the joining participant,
+          // initiate connection to the new participant
+          if (this.callState === 'connected' &&
+            this.userPublicKey !== data.participant &&
+            this.localStream) {
+            this._connectToGroupParticipant(data.participant);
+          }
+        }
+      }
+    });
+
+    // New: Group call participant left
+    this.socket.on('group_call_participant_left', (data) => {
+      this.log('Group call participant left:', data);
+
+      if (this.isGroupCall && this.callId === data.callId) {
+        // Remove participant from tracking
+        if (this.groupParticipants.has(data.participant)) {
+          // Close connection if exists
+          const participantData = this.groupParticipants.get(data.participant);
+          if (participantData.connection) {
+            participantData.connection.close();
+          }
+
+          // Remove from map
+          this.groupParticipants.delete(data.participant);
+
+          // Notify listeners
+          this._notifyListeners('participant_left', {
+            participant: data.participant,
+            callId: data.callId
+          });
+        }
       }
     });
 
@@ -412,11 +356,31 @@ class VoiceService {
       this._notifyListeners('call_state_changed', {
         state: 'ended',
         contact: this.remoteUserKey,
-        reason: 'remote_ended'
+        reason: 'remote_ended',
+        isGroup: this.isGroupCall
       });
 
       // Clean up after a short delay
       setTimeout(() => this._cleanupCall(), 3000);
+    });
+
+    // New: Group call ended
+    this.socket.on('group_call_ended', (data) => {
+      this.log('Group call ended:', data);
+
+      if (this.isGroupCall && this.callId === data.callId) {
+        this.callState = 'ended';
+        this._notifyListeners('call_state_changed', {
+          state: 'ended',
+          contact: this.remoteUserKey,
+          reason: 'group_call_ended',
+          isGroup: true,
+          groupId: this.groupId
+        });
+
+        // Clean up after a short delay
+        setTimeout(() => this._cleanupCall(), 3000);
+      }
     });
 
     this.socket.on('disconnect', () => {
@@ -428,7 +392,8 @@ class VoiceService {
         this._notifyListeners('call_state_changed', {
           state: 'ended',
           contact: this.remoteUserKey,
-          reason: 'signal_server_disconnected'
+          reason: 'signal_server_disconnected',
+          isGroup: this.isGroupCall
         });
 
         // Clean up immediately
@@ -472,8 +437,289 @@ class VoiceService {
   }
 
   /**
+ * Fetch TURN server credentials from our proxy server
+ * @returns {Promise<boolean>} Success status
+ */
+async _fetchTurnCredentials() {
+  try {
+    this.log('Fetching TURN credentials from proxy server');
+
+    const response = await fetch(`${this.serverUrl}/turn-credentials`);
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch TURN credentials: ${response.status}`);
+    }
+
+    const data = await response.json();
+    this.log('Received TURN credentials');
+
+    // Update ice servers configuration with the received credentials
+    if (data && data.iceServers && Array.isArray(data.iceServers)) {
+      // Replace all existing ice servers with our custom ones
+      this.peerConfig.config.iceServers = data.iceServers;
+
+      this.log('Updated ICE servers with custom TURN servers');
+      return true;
+    } else {
+      this.log('Invalid TURN credentials format received');
+      return false;
+    }
+  } catch (error) {
+    console.warn('Error fetching TURN credentials:', error);
+    
+    // Use a fallback set of TURN servers
+    const fallbackTurnServers = [
+      {
+        urls: [
+          'turn:relay1.expressturn.com:3478'
+        ],
+        username: 'efQX0LFAL6X57HSHIV',
+        credential: 'EUOrSrU4chhCfoRT'
+      }
+    ];
+    
+    // Update with fallback servers
+    this.peerConfig.config.iceServers = [
+      // Keep STUN servers
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      // Add fallback TURN servers
+      ...fallbackTurnServers
+    ];
+    
+    this.log('Using fallback TURN servers');
+    return true;
+  }
+}
+
+/**
+ * Clear all connection timeouts
+ * @private
+ */
+_clearAllTimeouts() {
+  // Clear all pending timeouts
+  if (this.connectionTimeouts && Array.isArray(this.connectionTimeouts)) {
+    this.connectionTimeouts.forEach(timeoutId => {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    });
+    this.connectionTimeouts = [];
+  }
+  
+  this.log('Cleared all connection timeouts');
+}
+
+  /**
+   * Initiate a call to a contact
+   */
+  async initiateCall(contactPublicKey) {
+    try {
+      // Prevent initiating multiple calls
+      if (this.callState) {
+        console.warn('Already in a call');
+        return false;
+      }
+
+      this.log('Initiating call to:', contactPublicKey);
+      this.remoteUserKey = contactPublicKey;
+      this.isOutgoingCall = true;
+      this.isGroupCall = false;
+
+      // Request microphone and establish local stream
+      await this._setupLocalStream();
+
+      // Generate a unique call ID
+      this.callId = `call-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+      this.log('Generated call ID:', this.callId);
+
+      // Start tracking connection time
+      this.connectionStartTime = Date.now();
+
+      // Reset connection attempt counter
+      this.currentConnectionAttempt = 0;
+
+      // Send call request to signaling server
+      this.socket.emit('call_request', {
+        callId: this.callId,
+        caller: this.userPublicKey,
+        recipient: contactPublicKey
+      });
+
+      // Update call state to ringing
+      this.callState = 'ringing';
+      this._notifyListeners('call_state_changed', {
+        state: 'ringing',
+        contact: contactPublicKey,
+        outgoing: true,
+        isGroup: false
+      });
+
+      return true;
+    } catch (error) {
+      console.error('Error initiating call:', error);
+      this.endCall();
+      throw error;
+    }
+  }
+
+  /**
+  * Initiate a group call
+  * @param {string} groupId - The group ID
+  * @param {string} groupName - Name of the group
+  * @param {Array} members - Array of member public keys
+  * @returns {Promise<boolean>} - Success status
+  */
+  async initiateGroupCall(groupId, groupName, members) {
+    try {
+      // Prevent initiating multiple calls
+      if (this.callState) {
+        console.warn('Already in a call');
+        return false;
+      }
+
+      this.log('Initiating group call:', groupId, members);
+      this.isOutgoingCall = true;
+      this.isGroupCall = true;
+      this.groupId = groupId;
+      this.groupMembers = members;
+
+      // Request microphone and establish local stream
+      await this._setupLocalStream();
+
+      // Generate a unique call ID
+      this.callId = `grpcall-${groupId}-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+      this.log('Generated group call ID:', this.callId);
+
+      // Start tracking connection time
+      this.connectionStartTime = Date.now();
+
+      // Reset connection attempt counter
+      this.currentConnectionAttempt = 0;
+
+      // Initialize empty participants map with the group members
+      this.groupParticipants.clear();
+      members.forEach(member => {
+        if (member !== this.userPublicKey) { // Skip ourselves
+          this.groupParticipants.set(member, { connected: false });
+        }
+      });
+
+      // Send group call request to signaling server
+      this.socket.emit('group_call_request', {
+        callId: this.callId,
+        caller: this.userPublicKey,
+        groupId: groupId,
+        groupName: groupName,
+        members: members
+      });
+
+      // Update call state to ringing
+      this.callState = 'ringing';
+      this._notifyListeners('call_state_changed', {
+        state: 'ringing',
+        groupId: groupId,
+        groupName: groupName,
+        members: members,
+        outgoing: true,
+        isGroup: true
+      });
+
+      return true;
+    } catch (error) {
+      console.error('Error initiating group call:', error);
+      this.endCall();
+      throw error;
+    }
+  }
+  /**
+   * Setup local audio stream with optimal settings
+   */
+  async _setupLocalStream() {
+    // Re-check network type before starting call
+    this._detectNetworkType();
+
+    this.log('Requesting microphone access with optimized settings');
+    try {
+      // Optimize audio constraints based on network type
+      const audioConstraints = {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true
+      };
+
+      // On mobile, add additional constraints for better reliability
+      if (this.isMobileNetwork) {
+        audioConstraints.channelCount = 1; // Mono audio (lower bandwidth)
+        audioConstraints.sampleRate = 16000; // Lower sample rate
+      }
+
+      this.localStream = await navigator.mediaDevices.getUserMedia({
+        audio: audioConstraints,
+        video: false
+      });
+
+      this.log('Microphone access granted, tracks:', this.localStream.getTracks().length);
+
+      // Verify audio tracks
+      const audioTracks = this.localStream.getAudioTracks();
+      if (audioTracks.length === 0) {
+        throw new Error('No audio track available');
+      }
+
+      // Process the audio for better quality
+      const processedStream = this._processAudioStream(this.localStream);
+
+      // Use processed stream if available, otherwise use original
+      if (processedStream && processedStream.getAudioTracks().length > 0) {
+        this.localStream = processedStream;
+        this.log('Using processed audio stream');
+      }
+
+      // Make sure audio tracks are enabled
+      this.localStream.getAudioTracks().forEach(track => {
+        track.enabled = true;
+        this.log('Audio track enabled:', track.label);
+      });
+
+      return this.localStream;
+    } catch (mediaError) {
+      console.error('Failed to get audio stream:', mediaError);
+      throw new Error('Microphone access denied. Please allow microphone access to make calls.');
+    }
+  }
+
+  /**
+   * Detect and monitor network type
+   */
+  _detectNetworkType() {
+    try {
+      const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+      const userAgent = navigator.userAgent.toLowerCase();
+
+      // Multiple detection methods
+      const isCellular = connection?.type === 'cellular';
+      const isUserAgentMobile = /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini/i.test(userAgent);
+      const isEffectiveTypeSlow = connection?.effectiveType === 'slow-2g' ||
+        connection?.effectiveType === '2g' ||
+        connection?.effectiveType === '3g';
+
+      this.isMobileNetwork = isCellular || isUserAgentMobile || isEffectiveTypeSlow;
+      this.networkType = this.isMobileNetwork ? 'mobile' : 'wifi';
+
+      this.log(`Network Detection:
+        Connection Type: ${connection?.type || 'unknown'}
+        Effective Type: ${connection?.effectiveType || 'unknown'}
+        Save Data: ${connection?.saveData || 'unknown'}
+        Final Network Type: ${this.networkType}
+      `);
+    } catch (error) {
+      console.error('Network detection failed:', error);
+    }
+  }
+
+  /**
    * Process audio stream to optimize for network conditions
-   * This helps audio quality on mobile networks
    */
   _processAudioStream(stream) {
     // If we don't have AudioContext or we're not in a call, just return the stream as-is
@@ -492,7 +738,7 @@ class VoiceService {
       const gainNode = this.audioContext.createGain();
       gainNode.gain.value = 1.0; // Normal volume
 
-      // Create a compressor to improve audibility on mobile
+      // Create a compressor to improve audibility
       const compressor = this.audioContext.createDynamicsCompressor();
       compressor.threshold.value = -24;
       compressor.knee.value = 30;
@@ -525,181 +771,62 @@ class VoiceService {
   }
 
   /**
-   * Initiate a call to a contact
-   */
-  async initiateCall(contactPublicKey) {
-    try {
-      // Prevent initiating multiple calls
-      if (this.callState) {
-        console.warn('Already in a call');
-        return false;
-      }
-
-      this.log('Initiating call to:', contactPublicKey);
-      this.remoteUserKey = contactPublicKey;
-      this.isOutgoingCall = true;
-
-      // Re-check network type before starting call
-      this._detectNetworkType();
-
-      // Request audio permissions with optimized constraints
-      this.log('Requesting microphone access with optimized settings');
-      try {
-        // Optimize audio constraints based on network type
-        const audioConstraints = {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true
-        };
-
-        // On mobile, add additional constraints for better reliability
-        if (this.isMobileNetwork) {
-          audioConstraints.channelCount = 1; // Mono audio (lower bandwidth)
-          audioConstraints.sampleRate = 16000; // Lower sample rate
-        }
-
-        this.localStream = await navigator.mediaDevices.getUserMedia({
-          audio: audioConstraints,
-          video: false
-        });
-
-        this.log('Microphone access granted, tracks:', this.localStream.getTracks().length);
-
-        // Verify audio tracks
-        const audioTracks = this.localStream.getAudioTracks();
-        if (audioTracks.length === 0) {
-          throw new Error('No audio track available');
-        }
-
-        // Process the audio for better quality
-        const processedStream = this._processAudioStream(this.localStream);
-
-        // Use processed stream if available, otherwise use original
-        if (processedStream && processedStream.getAudioTracks().length > 0) {
-          this.localStream = processedStream;
-          this.log('Using processed audio stream');
-        }
-
-        // Make sure audio tracks are enabled
-        this.localStream.getAudioTracks().forEach(track => {
-          track.enabled = true;
-          this.log('Audio track enabled:', track.label);
-        });
-      } catch (mediaError) {
-        console.error('Failed to get audio stream:', mediaError);
-        throw new Error('Microphone access denied. Please allow microphone access to make calls.');
-      }
-
-      // Generate a unique call ID
-      this.callId = `call-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-      this.log('Generated call ID:', this.callId);
-
-      // Start tracking connection time
-      this.connectionStartTime = Date.now();
-
-      // Reset connection attempt counter
-      this.currentConnectionAttempt = 0;
-
-      // Send call request to signaling server
-      this.socket.emit('call_request', {
-        callId: this.callId,
-        caller: this.userPublicKey,
-        recipient: contactPublicKey
-      });
-
-      // Update call state to ringing
-      this.callState = 'ringing';
-      this._notifyListeners('call_state_changed', {
-        state: 'ringing',
-        contact: contactPublicKey,
-        outgoing: true
-      });
-
-      return true;
-    } catch (error) {
-      console.error('Error initiating call:', error);
-      this.endCall();
-      throw error;
-    }
-  }
-
-  /**
    * Answer an incoming call
    */
   async answerCall() {
     try {
-      if (this.callState !== 'ringing' || !this.callId || !this.remoteUserKey) {
+      if (this.callState !== 'ringing' || !this.callId) {
         console.warn('No incoming call to answer');
         return false;
       }
 
       this.log('Answering call from:', this.remoteUserKey);
 
-      // Re-check network type before answering
-      this._detectNetworkType();
-
-      // Request audio permissions with optimized constraints
-      this.log('Requesting microphone access');
-      try {
-        // Optimize audio constraints based on network type
-        const audioConstraints = {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true
-        };
-
-        // On mobile, add additional constraints for better reliability
-        if (this.isMobileNetwork) {
-          audioConstraints.channelCount = 1; // Mono audio (lower bandwidth)
-          audioConstraints.sampleRate = 16000; // Lower sample rate
-        }
-
-        this.localStream = await navigator.mediaDevices.getUserMedia({
-          audio: audioConstraints,
-          video: false
-        });
-
-        this.log('Microphone access granted, tracks:', this.localStream.getTracks().length);
-
-        // Process the audio for better quality
-        const processedStream = this._processAudioStream(this.localStream);
-
-        // Use processed stream if available, otherwise use original
-        if (processedStream && processedStream.getAudioTracks().length > 0) {
-          this.localStream = processedStream;
-          this.log('Using processed audio stream');
-        }
-
-        // Make sure audio tracks are enabled
-        this.localStream.getAudioTracks().forEach(track => {
-          track.enabled = true;
-          this.log('Audio track enabled:', track.label);
-        });
-      } catch (mediaError) {
-        console.error('Failed to get audio stream:', mediaError);
-        throw new Error('Microphone access denied. Please allow microphone access to make calls.');
-      }
+      // Setup local audio stream
+      await this._setupLocalStream();
 
       // Send call accepted message
       this.socket.emit('call_response', {
         callId: this.callId,
         response: 'accepted',
         recipient: this.userPublicKey,
-        caller: this.remoteUserKey
+        caller: this.remoteUserKey,
+        isGroup: this.isGroupCall
       });
 
       // Update call state
       this.callState = 'connecting';
       this._notifyListeners('call_state_changed', {
         state: 'connecting',
-        contact: this.remoteUserKey
+        contact: this.remoteUserKey,
+        isGroup: this.isGroupCall
       });
 
       // Reset connection attempt counter
       this.currentConnectionAttempt = 0;
 
-      // Initiate WebRTC connection from the answerer side as well
-      this._initiateWebRTCConnection();
+      // Initiate WebRTC connection
+      if (this.isGroupCall) {
+        // Send join message to signaling server so others know we've joined
+        this.socket.emit('group_call_join', {
+          callId: this.callId,
+          groupId: this.groupId,
+          participant: this.userPublicKey
+        });
+
+        // Initialize PeerJS
+        await this._initializePeerJS();
+
+        // Connect to all existing participants
+        this.groupParticipants.forEach((data, participantKey) => {
+          if (participantKey !== this.userPublicKey) {
+            this._connectToGroupParticipant(participantKey);
+          }
+        });
+      } else {
+        // For regular 1:1 calls
+        this._initiateWebRTCConnection();
+      }
 
       return true;
     } catch (error) {
@@ -710,56 +837,9 @@ class VoiceService {
   }
 
   /**
-   * Reject an incoming call
+   * Initialize PeerJS for WebRTC connections
    */
-  rejectCall() {
-    if (this.callState !== 'ringing' || !this.callId || !this.remoteUserKey) {
-      console.warn('No incoming call to reject');
-      return false;
-    }
-
-    this.log('Rejecting call from:', this.remoteUserKey);
-
-    // Send call rejected message
-    this.socket.emit('call_response', {
-      callId: this.callId,
-      response: 'rejected',
-      recipient: this.userPublicKey,
-      caller: this.remoteUserKey
-    });
-
-    // Update call state
-    this.callState = 'ended';
-    this._notifyListeners('call_state_changed', {
-      state: 'ended',
-      contact: this.remoteUserKey,
-      reason: 'rejected_by_user'
-    });
-
-    // Clean up
-    this._cleanupCall();
-
-    return true;
-  }
-
-  _initiateWebRTCConnection() {
-    return this._enhancedWebRTCConnection();
-  }
-
-  /**
-   * Enhanced WebRTC connection with retry logic and mobile optimization
-   * Improved to handle mobile data connections better with audio focus
-   */
-  async _enhancedWebRTCConnection() {
-    if (!this.localStream) {
-      this.log('Local stream not available, cannot initiate WebRTC');
-      this.endCall();
-      return;
-    }
-
-    this.log('Initiating enhanced WebRTC connection with:', this.remoteUserKey);
-    this.log(`Network type: ${this.networkType}, Mobile: ${this.isMobileNetwork}`);
-
+  async _initializePeerJS() {
     // Clear all previous timeouts
     this._clearAllTimeouts();
 
@@ -791,205 +871,26 @@ class VoiceService {
     // Initialize PeerJS with configuration
     this.peer = new Peer(myPeerId, peerConfig);
 
-    // Track current connection attempt
-    this.currentConnectionAttempt = 0;
-
-    // Function to create a timeout with automatic cleanup
-    const createTimeout = (callback, timeout) => {
-      // Use longer timeout for mobile connections
-      const adjustedTimeout = this.isMobileNetwork ? timeout * 2 : timeout;
-
-      const timeoutId = setTimeout(() => {
-        // Remove from tracked timeouts
-        this.connectionTimeouts = this.connectionTimeouts.filter(id => id !== timeoutId);
-        // Execute callback
-        callback();
-      }, adjustedTimeout);
-
-      // Track timeout for cleanup
-      this.connectionTimeouts.push(timeoutId);
-
-      return timeoutId;
-    };
-
-    // Connection attempt function with improved retry logic
-    const attemptConnection = () => {
-      this.currentConnectionAttempt++;
-
-      // Update the UI with connection attempt
-      this._notifyListeners('connection_attempt', {
-        attempt: this.currentConnectionAttempt
-      });
-
-      this.log(`Connection attempt ${this.currentConnectionAttempt} of ${this.maxConnectionAttempts}`);
-
-      if (this.currentConnectionAttempt > this.maxConnectionAttempts) {
-        this.log('Maximum connection attempts reached, giving up');
-        this.callState = 'ended';
-        this._notifyListeners('call_state_changed', {
-          state: 'ended',
-          contact: this.remoteUserKey,
-          reason: 'connection_failed'
-        });
-
-        this._cleanupCall();
-        return;
-      }
-
-      try {
-        const remotePeerId = `${this.remoteUserKey}-${this.callId}`;
-        this.log('Calling remote peer:', remotePeerId);
-
-        // Enhanced call options for better audio
-        const callOptions = {
-          metadata: {
-            callId: this.callId,
-            attempt: this.currentConnectionAttempt,
-            networkType: this.networkType
-          },
-          // Modify SDP offer to optimize for audio quality
-          sdpTransform: (sdp) => {
-            // Add additional SDP modifications for better mobile compatibility
-            let modifiedSdp = sdp;
-
-            // Force opus codec with specific parameters for better audio
-            modifiedSdp = modifiedSdp.replace('useinbandfec=1', 'useinbandfec=1; stereo=0; sprop-stereo=0; maxaveragebitrate=24000');
-
-            // Add b=AS line to limit bandwidth
-            const bandwidthValue = this.isMobileNetwork ? '30' : '50'; // kbps
-            const lines = modifiedSdp.split('\r\n');
-            const audioIndex = lines.findIndex(line => line.startsWith('m=audio'));
-
-            if (audioIndex !== -1) {
-              // Add bandwidth restriction after the m=audio line
-              lines.splice(audioIndex + 1, 0, `b=AS:${bandwidthValue}`);
-              modifiedSdp = lines.join('\r\n');
-            }
-
-            // Set audio to high priority
-            modifiedSdp = modifiedSdp.replace(/a=mid:0/g, 'a=mid:0\r\na=content:main\r\na=priority:high');
-
-            return modifiedSdp;
-          }
-        };
-
-        // Verify audio tracks are enabled before calling
-        this.localStream.getAudioTracks().forEach(track => {
-          if (!track.enabled) {
-            track.enabled = true;
-            this.log('Re-enabled audio track before call');
-          }
-        });
-
-        // Make the call with audio stream and options
-        this.peerConnection = this.peer.call(remotePeerId, this.localStream, callOptions);
-
-        if (!this.peerConnection) {
-          this.log('Failed to create peer connection');
-
-          // Retry after delay
-          createTimeout(() => {
-            attemptConnection();
-          }, 2000 + (this.currentConnectionAttempt * 500)); // Increase delay with each attempt
-
-          return;
-        }
-
-        // Handle the connection
-        this._handlePeerConnection();
-
-        // Set timeout for this attempt - longer for mobile
-        const timeoutDuration = this.isMobileNetwork ?
-          8000 + (this.currentConnectionAttempt * 1000) : // longer for mobile
-          5000 + (this.currentConnectionAttempt * 500);   // shorter for wifi
-
-        createTimeout(() => {
-          // If we're still connecting, try again
-          if (this.callState === 'connecting') {
-            attemptConnection();
-          }
-        }, timeoutDuration);
-      } catch (err) {
-        console.error('Error calling remote peer:', err);
-
-        // Retry after delay - progressive backoff
-        createTimeout(() => {
-          attemptConnection();
-        }, 2000 + (this.currentConnectionAttempt * 1000));
-      }
-    };
-
+    // Set up event handlers
     this.peer.on('open', (id) => {
       this.log('PeerJS connection opened with ID:', id);
-
-      // Handle based on call direction
-      if (this.isOutgoingCall) {
-        // If this is an outgoing call, initiate connection with retry logic
-        attemptConnection();
-      }
     });
 
     this.peer.on('error', (err) => {
       this.log('PeerJS error:', err.type);
 
-      if (err.type === 'peer-unavailable' && this.callState === 'connecting') {
-        // For peer unavailable, if we're on mobile, wait longer between retries
-        const retryDelay = this.isMobileNetwork ?
-          3000 + (this.currentConnectionAttempt * 1000) :
-          2000 + (this.currentConnectionAttempt * 500);
-
-        createTimeout(() => {
-          if (this.callState === 'connecting') {
-            attemptConnection();
-          }
-        }, retryDelay);
-        return;
-      }
-
-      // For network errors, try to reconnect more aggressively
-      if (err.type === 'network' && this.callState === 'connecting') {
-        this.log('Network error, attempting quick reconnect');
-        createTimeout(() => {
-          if (this.callState === 'connecting') {
-            attemptConnection();
-          }
-        }, 1000);
-        return;
-      }
-
-      // For server or socket errors, maybe the server is overloaded
-      if ((err.type === 'server-error' || err.type === 'socket-error') &&
-        this.callState === 'connecting') {
-        createTimeout(() => {
-          if (this.callState === 'connecting') {
-            attemptConnection();
-          }
-        }, 3000);
-        return;
-      }
-
-      // For other errors, end the call if still active and we've exhausted retries
-      if (this.currentConnectionAttempt >= this.maxConnectionAttempts &&
-        this.callState !== 'ended' &&
-        this.callState !== null) {
-        this.callState = 'ended';
-        this._notifyListeners('call_state_changed', {
-          state: 'ended',
-          contact: this.remoteUserKey,
-          reason: 'connection_error'
-        });
-
-        // Clean up
-        this._cleanupCall();
+      // Handle connection errors
+      if (err.type === 'peer-unavailable') {
+        // This can happen in group calls when multiple connections are being established
+        this.log('Peer unavailable, may retry later if in group call');
+      } else if (err.type === 'network' || err.type === 'server-error' || err.type === 'socket-error') {
+        this.log('Network or server error in PeerJS');
       }
     });
 
-    // Listen for incoming calls (important for the answerer)
+    // Listen for incoming calls (important for group calls)
     this.peer.on('call', (incomingCall) => {
-      this.log('Received incoming PeerJS call');
-
-      // Clear any existing timeouts
-      this._clearAllTimeouts();
+      this.log('Received incoming PeerJS call from:', incomingCall.peer);
 
       // Enhanced answer options
       const answerOptions = {
@@ -1018,6 +919,10 @@ class VoiceService {
         }
       };
 
+      // Extract the caller's public key from the peer ID
+      const callerPeerId = incomingCall.peer;
+      const callerPublicKey = callerPeerId.split('-')[0];
+
       // Verify audio tracks are enabled before answering
       this.localStream.getAudioTracks().forEach(track => {
         if (!track.enabled) {
@@ -1029,309 +934,248 @@ class VoiceService {
       // Answer the call with our local stream and options
       incomingCall.answer(this.localStream, answerOptions);
 
-      // Update our connection reference
-      this.peerConnection = incomingCall;
-
-      // Handle the connection
-      this._handlePeerConnection();
-    });
-  }
-
-  /**
-   * Handle PeerJS connection events with advanced audio handling
-   */
-  _handlePeerConnection() {
-    if (!this.peerConnection) {
-      this.log('No peer connection to handle');
-      return;
-    }
-
-    // Handle remote stream with enhanced audio processing
-    this.peerConnection.on('stream', (stream) => {
-      this.log('Received remote stream with tracks:', stream.getTracks().length);
-
-      // Verify we have audio tracks in the remote stream
-      const remoteTracks = stream.getAudioTracks();
-      if (remoteTracks.length === 0) {
-        this.log('Warning: Remote stream has no audio tracks');
-      } else {
-        this.log('Remote audio track received:', remoteTracks[0].label, 'enabled:', remoteTracks[0].enabled);
-
-        // Make sure the remote tracks are enabled
-        remoteTracks.forEach(track => {
-          if (!track.enabled) {
-            this.log('Remote track was disabled, enabling it');
-            track.enabled = true;
-          }
-        });
-      }
-
-      // Store the remote stream
-      this.remoteStream = stream;
-
-      // Notify listeners of remote stream
-      this._notifyListeners('remote_stream_added', { stream });
-
-      // Update call state to connected
-      this.callState = 'connected';
-      this._notifyListeners('call_state_changed', {
-        state: 'connected',
-        contact: this.remoteUserKey
-      });
-
-      // Clear all connection attempt timeouts
-      this._clearAllTimeouts();
-
-      // Start audio monitoring to ensure continued audio flow
-      this._startAudioMonitoring();
-    });
-
-    // Handle call closing
-    this.peerConnection.on('close', () => {
-      this.log('Peer connection closed');
-
-      if (this.callState !== 'ended') {
-        this.callState = 'ended';
-        this._notifyListeners('call_state_changed', {
-          state: 'ended',
-          contact: this.remoteUserKey,
-          reason: 'connection_closed'
-        });
-
-        // Clean up
-        this._cleanupCall();
-      }
-    });
-
-    // Handle errors
-    this.peerConnection.on('error', (err) => {
-      console.error('Peer connection error:', err);
-
-      if (this.callState !== 'ended') {
-        this.callState = 'ended';
-        this._notifyListeners('call_state_changed', {
-          state: 'ended',
-          contact: this.remoteUserKey,
-          reason: 'connection_error'
-        });
-
-        // Clean up
-        this._cleanupCall();
-      }
-    });
-
-    // Access the underlying RTCPeerConnection for advanced monitoring
-    if (this.peerConnection.peerConnection) {
-      const rtcPeerConn = this.peerConnection.peerConnection;
-
-      // Listen for ICE connection state changes
-      rtcPeerConn.oniceconnectionstatechange = () => {
-        this.log('ICE connection state:', rtcPeerConn.iceConnectionState);
-
-        if (rtcPeerConn.iceConnectionState === 'failed') {
-          this.log('ICE connection failed - attempting to restart ICE');
-
-          // Try to restart ICE if supported
-          if (rtcPeerConn.restartIce) {
-            rtcPeerConn.restartIce();
-            this.log('ICE restart requested');
-          } else {
-            // Fallback: create offer with iceRestart flag
-            rtcPeerConn.createOffer({ iceRestart: true })
-              .then(offer => rtcPeerConn.setLocalDescription(offer))
-              .then(() => {
-                this.log('ICE restart via createOffer successful');
-              })
-              .catch(err => {
-                console.error('ICE restart failed:', err);
-                this.endCall();
-              });
-          }
-        }
-
-        // Handle disconnections more gracefully
-        if (rtcPeerConn.iceConnectionState === 'disconnected' &&
-          this.callState === 'connected') {
-          this.log('ICE connection disconnected - waiting to see if it reconnects');
-
-          // Wait a bit to see if it reconnects
-          setTimeout(() => {
-            if ((rtcPeerConn.iceConnectionState === 'disconnected' ||
-              rtcPeerConn.iceConnectionState === 'failed') &&
-              this.callState === 'connected') {
-              this.log('ICE connection remained disconnected, ending call');
-              this.endCall();
-            }
-          }, 5000);
-        }
-
-        // If we're reconnected, make sure audio is flowing
-        if (rtcPeerConn.iceConnectionState === 'connected' &&
-          this.callState === 'connected') {
-          this._verifyAudioFlowing();
-        }
-      };
-
-      // Monitor connection state changes
-      rtcPeerConn.onconnectionstatechange = () => {
-        this.log('Connection state:', rtcPeerConn.connectionState);
-
-        if (rtcPeerConn.connectionState === 'failed') {
-          this.log('Connection failed permanently, ending call');
-          this.endCall();
-        }
-      };
-
-      // Listen for signaling state changes (helps debug)
-      rtcPeerConn.onsignalingstatechange = () => {
-        this.log('Signaling state:', rtcPeerConn.signalingState);
-      };
-    }
-  }
-
-  /**
-   * Start monitoring audio levels to ensure audio is flowing
-   */
-  _startAudioMonitoring() {
-    // Clear any existing monitoring
-    if (this.audioMonitoringInterval) {
-      clearInterval(this.audioMonitoringInterval);
-    }
-
-    // Start monitoring audio
-    this.audioMonitoringInterval = setInterval(() => {
-      this._verifyAudioFlowing();
-    }, 5000); // Check every 5 seconds
-  }
-
-  /**
-   * Verify audio is flowing and fix if possible
-   */
-  _verifyAudioFlowing() {
-    // Only verify audio when connected
-    if (this.callState !== 'connected') {
-      return;
-    }
-
-    // Check local stream
-    if (this.localStream) {
-      const localTracks = this.localStream.getAudioTracks();
-      if (localTracks.length > 0) {
-        // Make sure local tracks are enabled
-        localTracks.forEach(track => {
-          if (!track.enabled) {
-            this.log('Local track was disabled, re-enabling');
-            track.enabled = true;
-          }
-        });
-      }
-    }
-
-    // Check remote stream
-    if (this.remoteStream) {
-      const remoteTracks = this.remoteStream.getAudioTracks();
-      if (remoteTracks.length > 0) {
-        // Check if remote tracks are enabled
-        const allEnabled = remoteTracks.every(track => track.enabled);
-        if (!allEnabled) {
-          this.log('Remote track was disabled, attempting to recover');
-          remoteTracks.forEach(track => {
-            if (!track.enabled) {
-              track.enabled = true;
-            }
+      // If in a group call, track this connection
+      if (this.isGroupCall) {
+        if (this.groupParticipants.has(callerPublicKey)) {
+          const participantData = this.groupParticipants.get(callerPublicKey);
+          participantData.connection = incomingCall;
+          this.groupParticipants.set(callerPublicKey, participantData);
+        } else {
+          // New participant
+          this.groupParticipants.set(callerPublicKey, {
+            connection: incomingCall,
+            connected: false
           });
         }
-      } else if (this.callState === 'connected') {
-        this.log('No remote audio tracks but call is connected. Possible audio issue.');
-        // This is a fallback - if we're connected but have no remote tracks, there might be an issue
-        // Wait a bit and check again before handling
-        setTimeout(() => {
-          if (this.callState === 'connected' && (!this.remoteStream || this.remoteStream.getAudioTracks().length === 0)) {
-            this.log('Still no remote audio tracks after grace period. Trying to restart connection.');
-            this._tryRestartConnection();
-          }
-        }, 3000);
+
+        // Handle this participant's stream
+        this._handlePeerConnectionForGroup(incomingCall, callerPublicKey);
+      } else {
+        // For 1:1 calls
+        this.peerConnection = incomingCall;
+        this._handlePeerConnection();
       }
-    }
+    });
 
-    // If we have access to the RTCPeerConnection, check stats to detect issues
-    if (this.peerConnection && this.peerConnection.peerConnection) {
-      const rtcPeerConn = this.peerConnection.peerConnection;
-
-      rtcPeerConn.getStats(null).then(stats => {
-        let audioFlowing = false;
-        let bytesReceived = 0;
-
-        // Process stats to check if audio data is flowing
-        stats.forEach(stat => {
-          // Look for inbound-rtp statistics for audio
-          if (stat.type === 'inbound-rtp' && stat.kind === 'audio') {
-            bytesReceived = stat.bytesReceived || 0;
-
-            // If we're receiving data, audio is likely flowing
-            if (bytesReceived > 0) {
-              audioFlowing = true;
-            }
-          }
-        });
-
-        // If we've been connected for a while but no audio is flowing, there might be an issue
-        if (!audioFlowing && this.callState === 'connected' &&
-          (Date.now() - this.connectionStartTime) > 10000) {
-          this.log('No audio data flowing detected in stats. Attempting to recover.');
-          this._tryRestartConnection();
-        }
-      }).catch(err => {
-        console.warn('Error getting peer connection stats:', err);
-      });
-    }
+    return this.peer;
   }
 
   /**
-   * Try to restart the connection if audio issues are detected
+  * Reject an incoming call - works for both 1:1 and group calls
+  */
+  rejectCall() {
+    if (this.callState !== 'ringing' || !this.callId) {
+      console.warn('No incoming call to reject');
+      return false;
+    }
+
+    this.log('Rejecting call from:', this.remoteUserKey);
+
+    // Send call rejected message
+    this.socket.emit('call_response', {
+      callId: this.callId,
+      response: 'rejected',
+      recipient: this.userPublicKey,
+      caller: this.remoteUserKey,
+      isGroup: this.isGroupCall // Include isGroup flag for group calls
+    });
+
+    // Update call state
+    this.callState = 'ended';
+    this._notifyListeners('call_state_changed', {
+      state: 'ended',
+      contact: this.remoteUserKey,
+      reason: 'rejected_by_user',
+      isGroup: this.isGroupCall
+    });
+
+    // Clean up
+    this._cleanupCall();
+
+    return true;
+  }
+
+  /**
+   * Connect to a specific group participant
+   * @param {string} participantKey - The participant's public key
+   * @private
    */
-  _tryRestartConnection() {
-    if (!this.peerConnection || !this.peerConnection.peerConnection || this.callState !== 'connected') {
+  _connectToGroupParticipant(participantKey) {
+    if (!this.peer || !this.localStream) {
+      this.log(`Cannot connect to participant ${participantKey} - peer or stream not ready`);
       return;
     }
 
     try {
-      const rtcPeerConn = this.peerConnection.peerConnection;
+      // Create a unique ID for this connection
+      const remotePeerId = `${participantKey}-${this.callId}`;
+      this.log(`Connecting to group participant: ${participantKey} with peer ID ${remotePeerId}`);
 
-      // First try an ICE restart
-      this.log('Attempting to fix audio issues by restarting ICE');
+      // Enhanced call options for better audio
+      const callOptions = {
+        metadata: {
+          callId: this.callId,
+          groupId: this.groupId,
+          isGroup: true
+        },
+        sdpTransform: (sdp) => {
+          // Add SDP modifications for better audio quality
+          let modifiedSdp = sdp;
 
-      // Create a new offer with iceRestart flag
-      rtcPeerConn.createOffer({ iceRestart: true })
-        .then(offer => rtcPeerConn.setLocalDescription(offer))
-        .then(() => {
-          this.log('ICE restart for audio recovery initiated');
-        })
-        .catch(err => {
-          console.warn('Failed to restart ICE for audio recovery:', err);
+          // Force opus codec with specific parameters
+          modifiedSdp = modifiedSdp.replace('useinbandfec=1', 'useinbandfec=1; stereo=0; sprop-stereo=0; maxaveragebitrate=24000');
 
-          // If ICE restart fails and we still have no audio, consider ending the call
-          setTimeout(() => {
-            if (this.callState === 'connected') {
-              this._verifyAudioFlowing();
-            }
-          }, 5000);
-        });
+          // Add bandwidth restriction
+          const bandwidthValue = this.isMobileNetwork ? '30' : '50'; // kbps
+          const lines = modifiedSdp.split('\r\n');
+          const audioIndex = lines.findIndex(line => line.startsWith('m=audio'));
+
+          if (audioIndex !== -1) {
+            // Add bandwidth restriction after the m=audio line
+            lines.splice(audioIndex + 1, 0, `b=AS:${bandwidthValue}`);
+            modifiedSdp = lines.join('\r\n');
+          }
+
+          // Set audio priority
+          modifiedSdp = modifiedSdp.replace(/a=mid:0/g, 'a=mid:0\r\na=content:main\r\na=priority:high');
+
+          return modifiedSdp;
+        }
+      };
+
+      // Make the call to this participant
+      const connection = this.peer.call(remotePeerId, this.localStream, callOptions);
+
+      if (connection) {
+        // Store the connection
+        if (this.groupParticipants.has(participantKey)) {
+          const participantData = this.groupParticipants.get(participantKey);
+          participantData.connection = connection;
+          this.groupParticipants.set(participantKey, participantData);
+        } else {
+          this.groupParticipants.set(participantKey, { connection, connected: false });
+        }
+
+        // Handle this connection
+        this._handlePeerConnectionForGroup(connection, participantKey);
+      } else {
+        this.log(`Failed to create connection to participant ${participantKey}`);
+      }
     } catch (error) {
-      console.warn('Error trying to restart connection:', error);
+      console.error(`Error connecting to group participant ${participantKey}:`, error);
     }
   }
 
   /**
-   * Process a WebRTC signal from a remote peer
+   * Handle peer connection for a group participant
+   * @param {Object} connection - The peer connection
+   * @param {string} participantKey - The participant's public key
+   * @private
    */
-  _processSignal(signal, sender) {
-    // This is handled by PeerJS internally
-    this.log('Signal processing is handled by PeerJS');
+  _handlePeerConnectionForGroup(connection, participantKey) {
+    if (!connection) {
+      this.log(`No connection to handle for participant ${participantKey}`);
+      return;
+    }
+
+    this.log(`Setting up connection handlers for participant ${participantKey}`);
+
+    // Handle remote stream
+    connection.on('stream', (stream) => {
+      this.log(`Received stream from participant ${participantKey}`);
+
+      // Store the stream with the participant data
+      if (this.groupParticipants.has(participantKey)) {
+        const participantData = this.groupParticipants.get(participantKey);
+        participantData.stream = stream;
+        participantData.connected = true;
+        this.groupParticipants.set(participantKey, participantData);
+
+        // Notify listeners about this stream
+        this._notifyListeners('participant_stream_added', {
+          participant: participantKey,
+          stream: stream
+        });
+
+        // If this is our first connection, update call state to connected
+        if (this.callState !== 'connected') {
+          this.callState = 'connected';
+          this._notifyListeners('call_state_changed', {
+            state: 'connected',
+            isGroup: true,
+            groupId: this.groupId
+          });
+        }
+      }
+    });
+
+    // Handle connection closing
+    connection.on('close', () => {
+      this.log(`Connection closed with participant ${participantKey}`);
+
+      // Update participant data
+      if (this.groupParticipants.has(participantKey)) {
+        const participantData = this.groupParticipants.get(participantKey);
+        participantData.connected = false;
+        participantData.connection = null;
+        this.groupParticipants.set(participantKey, participantData);
+
+        // Notify listeners
+        this._notifyListeners('participant_disconnected', {
+          participant: participantKey
+        });
+      }
+
+      // Check if we still have any active connections
+      let hasActiveConnections = false;
+      this.groupParticipants.forEach((data) => {
+        if (data.connected) hasActiveConnections = true;
+      });
+
+      // If no active connections and we're not ending the call, try to reconnect
+      if (!hasActiveConnections && this.callState === 'connected') {
+        // Allow a brief period for reconnection before giving up
+        setTimeout(() => {
+          let stillNoConnections = true;
+          this.groupParticipants.forEach((data) => {
+            if (data.connected) stillNoConnections = false;
+          });
+
+          if (stillNoConnections && this.callState === 'connected') {
+            this.log('All group participants disconnected, ending call');
+            this.endCall();
+          }
+        }, 10000); // 10 second grace period
+      }
+    });
+
+    // Handle errors
+    connection.on('error', (err) => {
+      console.error(`Error in connection with participant ${participantKey}:`, err);
+
+      // Mark connection as failed
+      if (this.groupParticipants.has(participantKey)) {
+        const participantData = this.groupParticipants.get(participantKey);
+        participantData.connected = false;
+        participantData.error = err.message || 'Connection error';
+        this.groupParticipants.set(participantKey, participantData);
+
+        // Try to reconnect
+        setTimeout(() => {
+          if (this.callState === 'connected' && this.groupParticipants.has(participantKey)) {
+            const currentData = this.groupParticipants.get(participantKey);
+            if (!currentData.connected) {
+              this.log(`Attempting to reconnect to participant ${participantKey}`);
+              this._connectToGroupParticipant(participantKey);
+            }
+          }
+        }, 3000); // Wait 3 seconds before retry
+      }
+    });
   }
 
   /**
-   * End the current call
+   * End the current call - expanded for group calls
    */
   endCall() {
     try {
@@ -1339,14 +1183,22 @@ class VoiceService {
         return false;
       }
 
-      this.log('Ending call');
+      this.log('Ending call:', this.isGroupCall ? 'group call' : 'direct call');
 
       // Notify signaling server
       if (this.socket && this.callId) {
-        this.socket.emit('end_call', {
-          callId: this.callId,
-          userId: this.userPublicKey
-        });
+        if (this.isGroupCall) {
+          this.socket.emit('end_group_call', {
+            callId: this.callId,
+            groupId: this.groupId,
+            userId: this.userPublicKey
+          });
+        } else {
+          this.socket.emit('end_call', {
+            callId: this.callId,
+            userId: this.userPublicKey
+          });
+        }
       }
 
       // Update state
@@ -1354,7 +1206,9 @@ class VoiceService {
       this._notifyListeners('call_state_changed', {
         state: 'ended',
         contact: this.remoteUserKey,
-        reason: 'ended_by_user'
+        reason: 'ended_by_user',
+        isGroup: this.isGroupCall,
+        groupId: this.isGroupCall ? this.groupId : undefined
       });
 
       // Clean up after a short delay to allow UI updates
@@ -1371,7 +1225,7 @@ class VoiceService {
   }
 
   /**
-   * Clean up call resources
+   * Clean up call resources - enhanced for group calls
    */
   _cleanupCall() {
     this.log('Cleaning up call resources');
@@ -1425,7 +1279,23 @@ class VoiceService {
       }
     }
 
-    // Close peer connection
+    // For group calls, close all participant connections
+    if (this.isGroupCall && this.groupParticipants && this.groupParticipants.size > 0) {
+      this.groupParticipants.forEach((data, participantKey) => {
+        if (data.connection) {
+          try {
+            data.connection.close();
+          } catch (e) {
+            console.warn(`Error closing connection to participant ${participantKey}:`, e);
+          }
+        }
+      });
+
+      // Clear group participants
+      this.groupParticipants.clear();
+    }
+
+    // Close main peer connection
     if (this.peerConnection) {
       try {
         this.peerConnection.close();
@@ -1456,6 +1326,11 @@ class VoiceService {
     this.isOutgoingCall = false;
     this.currentConnectionAttempt = 0;
 
+    // Reset group call properties
+    this.isGroupCall = false;
+    this.groupId = null;
+    this.groupMembers = [];
+
     // Notify listeners of final state
     this._notifyListeners('call_state_changed', {
       state: null,
@@ -1464,226 +1339,13 @@ class VoiceService {
   }
 
   /**
-   * Clear all connection timeouts
+   * Process a WebRTC signal from a remote peer - improved for group calls
    */
-  _clearAllTimeouts() {
-    // Clear all pending timeouts
-    this.connectionTimeouts.forEach(timeoutId => {
-      clearTimeout(timeoutId);
-    });
-    this.connectionTimeouts = [];
+  _processSignal(signal, sender) {
+    // This is handled by PeerJS internally
+    this.log(`Signal processing from ${sender} ${this.isGroupCall ? 'for group call' : 'for direct call'}`);
   }
 
-  /**
-   * Join a call with an existing call ID
-   * @param {string} callId - The call ID to join
-   * @param {string} contactPublicKey - The contact's public key
-   */
-  async joinCall(callId, contactPublicKey) {
-    try {
-      // Prevent joining if already in a call
-      if (this.callState) {
-        console.warn('Already in a call, cannot join another');
-        return false;
-      }
-
-      this.log('Joining call:', callId, 'with contact:', contactPublicKey);
-
-      // Re-check network type before starting call
-      this._detectNetworkType();
-
-      // Set call parameters
-      this.callId = callId;
-      this.remoteUserKey = contactPublicKey;
-      this.isOutgoingCall = true; // We're initiating the connection
-
-      // Request audio permissions with optimized constraints
-      this.log('Requesting microphone access for join');
-      try {
-        // Optimize audio constraints based on network type
-        const audioConstraints = {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true
-        };
-
-        // On mobile, add additional constraints for better reliability
-        if (this.isMobileNetwork) {
-          audioConstraints.channelCount = 1; // Mono audio (lower bandwidth)
-          audioConstraints.sampleSize = 16000; // Lower sample rate
-        }
-
-        this.localStream = await navigator.mediaDevices.getUserMedia({
-          audio: audioConstraints,
-          video: false
-        });
-
-        this.log('Microphone access granted for join, tracks:', this.localStream.getTracks().length);
-
-        // Process the audio for better quality
-        const processedStream = this._processAudioStream(this.localStream);
-
-        // Use processed stream if available, otherwise use original
-        if (processedStream && processedStream.getAudioTracks().length > 0) {
-          this.localStream = processedStream;
-          this.log('Using processed audio stream for join');
-        }
-
-        // Make sure audio tracks are enabled
-        this.localStream.getAudioTracks().forEach(track => {
-          track.enabled = true;
-          this.log('Audio track enabled for join:', track.label);
-        });
-      } catch (mediaError) {
-        console.error('Failed to get audio stream for join:', mediaError);
-        throw new Error('Microphone access denied. Please allow microphone access to make calls.');
-      }
-
-      // Update call state
-      this.callState = 'connecting';
-      this._notifyListeners('call_state_changed', {
-        state: 'connecting',
-        contact: contactPublicKey,
-        outgoing: true
-      });
-
-      // Reset connection attempt counter
-      this.currentConnectionAttempt = 0;
-
-      // Initiate WebRTC connection
-      this._initiateWebRTCConnection();
-
-      return true;
-    } catch (error) {
-      console.error('Error joining call:', error);
-      this.endCall();
-      throw error;
-    }
-  }
-
-  /**
-   * Toggle microphone mute state
-   */
-  toggleMute() {
-    if (!this.localStream) {
-      return false;
-    }
-
-    this.isMuted = !this.isMuted;
-    this.log('Toggle mute:', this.isMuted ? 'Muted' : 'Unmuted');
-
-    // Update all audio tracks
-    this.localStream.getAudioTracks().forEach(track => {
-      track.enabled = !this.isMuted;
-      this.log(`Audio track ${track.label} ${track.enabled ? 'enabled' : 'disabled'}`);
-    });
-
-    this._notifyListeners('mute_changed', { isMuted: this.isMuted });
-    return this.isMuted;
-  }
-
-  /**
-   * Check if currently in a call
-   */
-  isInCall() {
-    return this.callState === 'connecting' || this.callState === 'connected' || this.callState === 'ringing';
-  }
-
-  /**
-   * Get current mute state
-   */
-  getMuteState() {
-    return this.isMuted;
-  }
-
-  /**
-   * Process a signaling message from the messaging system
-   * This helps with WebRTC signaling over the message channel
-   */
-  processSignalingMessage(senderKey, signalData) {
-    this.log('Processing incoming signaling message from:', senderKey);
-
-    // Basic validation
-    if (!signalData) {
-      this.log('Invalid signal data received');
-      return;
-    }
-
-    // For future implementation of direct signaling
-  }
-
-  /**
- * Fetch TURN server credentials from our proxy server
- * @returns {Promise<boolean>} Success status
- */
-  async _fetchTurnCredentials() {
-    try {
-      this.log('Fetching TURN credentials from proxy server');
-
-      const response = await fetch(`${this.serverUrl}/turn-credentials`);
-
-      if (!response.ok) {
-        throw new Error(`Failed to fetch TURN credentials: ${response.status}`);
-      }
-
-      const data = await response.json();
-      this.log('Received TURN credentials');
-
-      // Update ice servers configuration with the received credentials
-      if (data && data.iceServers && Array.isArray(data.iceServers)) {
-        // Replace all existing ice servers with our custom ones
-        this.peerConfig.config.iceServers = data.iceServers;
-
-        this.log('Updated ICE servers with custom TURN servers');
-        return true;
-      } else {
-        this.log('Invalid TURN credentials format received');
-        return false;
-      }
-    } catch (error) {
-      console.warn('Error fetching TURN credentials:', error);
-      return false;
-    }
-  }
-
-
-  /**
-   * Get diagnostic info for debugging
-   */
-  getDiagnosticInfo() {
-    const info = {
-      initialized: this.initialized,
-      callState: this.callState,
-      callId: this.callId,
-      isMuted: this.isMuted,
-      hasLocalStream: !!this.localStream,
-      localStreamTracks: this.localStream ? this.localStream.getTracks().length : 0,
-      hasRemoteStream: !!this.remoteStream,
-      remoteStreamTracks: this.remoteStream ? this.remoteStream.getTracks().length : 0,
-      socketConnected: this.socket && this.socket.connected,
-      peerInitialized: !!this.peer,
-      peerConnectionActive: !!this.peerConnection,
-      iceConnectionState: this.peerConnection && this.peerConnection.peerConnection ?
-        this.peerConnection.peerConnection.iceConnectionState : 'unknown',
-      connectionState: this.peerConnection && this.peerConnection.peerConnection ?
-        this.peerConnection.peerConnection.connectionState : 'unknown',
-      userPublicKey: this.userPublicKey,
-      remoteUserKey: this.remoteUserKey,
-      isOutgoingCall: this.isOutgoingCall,
-      networkType: this.networkType,
-      isMobileNetwork: this.isMobileNetwork,
-      currentConnectionAttempt: this.currentConnectionAttempt,
-      audioContextState: this.audioContext ? this.audioContext.state : 'none',
-      hasAudioProcessor: !!this.audioProcessor,
-      browserInfo: {
-        userAgent: navigator.userAgent,
-        webRTCSupport: typeof RTCPeerConnection !== 'undefined',
-        mediaDevicesSupport: !!navigator.mediaDevices
-      }
-    };
-
-    return info;
-  }
 }
 
 const voiceService = new VoiceService();
