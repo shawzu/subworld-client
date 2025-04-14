@@ -36,14 +36,23 @@ export default function Landing() {
     }),
   }
 
-  // Improved navigation handler
-  const handleStartMessaging = (e) => {
-    e.preventDefault() // Prevent default behavior
-    e.stopPropagation() // Stop event propagation
+  // IMPROVED navigation handler with multiple fallbacks
+  const handleStartMessaging = () => {
     console.log('Start messaging button clicked, navigating to /welcome')
-    // Try multiple navigation approaches for compatibility
+    
+    // Try all available navigation methods
     try {
+      // First attempt: Use Next.js router
       router.push('/welcome')
+      
+      // Second attempt after a brief delay if needed
+      setTimeout(() => {
+        // Check if we've successfully navigated
+        if (window.location.pathname !== '/welcome') {
+          console.log('Router navigation may have failed, using direct URL change')
+          window.location.href = '/welcome'
+        }
+      }, 100)
     } catch (err) {
       console.error('Router navigation failed:', err)
       // Fallback to direct navigation
@@ -63,7 +72,7 @@ export default function Landing() {
         <motion.div
           initial={{ y: -50, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
-          transition={{ duration: 0.5 }}
+          transition={{ delay: 0.2, duration: 0.5 }}
           className="space-y-12 text-center"
         >
           <Image
@@ -97,25 +106,26 @@ export default function Landing() {
           transition={{ delay: 0.5, duration: 0.5 }}
           className="space-y-6"
         >
-          {/* Interactive element as button for better accessibility */}
-          <motion.a
-            href="/welcome"
-            onClick={handleStartMessaging}
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-            className="w-full max-w-md mx-auto h-14 text-lg bg-white hover:bg-gray-200 text-black flex items-center justify-center gap-2 rounded-2xl shadow-lg transition-colors duration-300 cursor-pointer"
-            role="button"
-            tabIndex={0}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault()
-                handleStartMessaging(e)
-              }
-            }}
-          >
-            Start Messaging
-            <ArrowRight className="w-5 h-5" />
-          </motion.a>
+          {/* IMPROVED: Multiple button versions to ensure it works everywhere */}
+          <div className="relative w-full max-w-md mx-auto">
+            {/* Version 1: Standard button for most browsers */}
+            <motion.button
+              onClick={handleStartMessaging}
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              className="w-full h-14 text-lg bg-white hover:bg-gray-200 text-black flex items-center justify-center gap-2 rounded-2xl shadow-lg transition-colors duration-300 cursor-pointer"
+            >
+              Start Messaging
+              <ArrowRight className="w-5 h-5" />
+            </motion.button>
+            
+            {/* Version 2: Direct link for iOS PWA fallback (positioned absolutely on top) */}
+            <a 
+              href="/welcome"
+              className="absolute inset-0 opacity-0"
+              aria-hidden="true"
+            />
+          </div>
 
           <motion.p
             whileHover={{ scale: 1.05 }}
