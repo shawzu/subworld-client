@@ -80,7 +80,10 @@ export default function App() {
   };
 
   const handleGroupClick = (groupId) => {
-    if (!conversationManager) return;
+    if (!conversationManager) {
+      console.error("Conversation manager not available");
+      return;
+    }
 
     console.log("Handling group click for ID:", groupId);
 
@@ -101,21 +104,30 @@ export default function App() {
       console.log("Trying prefixed ID:", prefixedId, "Found:", !!group);
     }
 
-    // If we still don't have a group, error and cleanup
     if (!group) {
       console.error(`Group with ID ${groupId} not found`);
       return;
     }
 
-    // Set the selected group and update UI
-    setSelectedGroup(group);
     setSelectedConversation(null);
+
+    setSelectedGroup(group);
+
+    setActiveTab('messages');
+
 
     if (isMobile) {
       setShowConversationList(false);
     }
-  };
 
+
+    console.log("States after selection:", {
+      selectedGroup: group.id,
+      selectedConversation: null,
+      activeTab: 'messages',
+      showConversationList: !isMobile
+    });
+  };
 
   useEffect(() => {
     // Share services with each other
@@ -483,7 +495,7 @@ export default function App() {
       alert('Service not available. Please try again later.');
       return;
     }
-
+  
     try {
       // Create the group
       const group = await conversationManager.createGroup(
@@ -491,31 +503,36 @@ export default function App() {
         groupData.description,
         groupData.members
       );
-
+  
       // Reload all data
       if (conversationManager) {
         await conversationManager.fetchGroups();
         const groupPreviews = conversationManager.getGroupPreviews();
         setGroups(groupPreviews);
       }
-
+  
       // Update the conversations list
       setConversations(getConversationPreviews());
+  
 
-      // Select the newly created group
-      setSelectedGroup(group);
       setSelectedConversation(null);
+      
 
+      setSelectedGroup(group);
+      
+ 
+      setActiveTab('messages');
+  
       if (isMobile) {
         setShowConversationList(false);
       }
-
+  
       return group;
     } catch (error) {
       console.error('Error creating group:', error);
       throw error;
     }
-  }
+  };
 
   // Select a conversation
   const handleConversationClick = (contactPublicKey) => {
@@ -750,13 +767,15 @@ export default function App() {
                   whileTap={{ scale: 0.98 }}
                   onClick={() => {
                     if (conv.isGroup) {
+                      console.log("Clicked group in sidebar:", conv.id);
+
                       handleGroupClick(conv.id);
                     } else {
                       handleConversationClick(conv.contactPublicKey);
                     }
                   }}
                   className={`p-5 hover:bg-gray-800 rounded-lg mx-4 my-3 cursor-pointer transition duration-300 ${(selectedConversation === conv.contactPublicKey ||
-                      (selectedGroup && selectedGroup.id === conv.id)) ? 'bg-gray-800' : ''
+                    (selectedGroup && selectedGroup.id === conv.id)) ? 'bg-gray-800' : ''
                     }`}
                 >
                   <div className="flex items-center">

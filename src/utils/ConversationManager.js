@@ -1086,14 +1086,19 @@ class ConversationManager {
     try {
       const group = await subworldNetwork.getGroup(groupId);
 
+
       if (group.members.includes(memberPublicKey)) {
         return true;
       }
-      const updatedMembers = [...group.members, memberPublicKey];
 
+      const updatedMembers = [...group.members, memberPublicKey];
       const result = await subworldNetwork.addGroupMember(groupId, memberPublicKey);
 
       await this.fetchGroupMessages(groupId);
+
+      const updatedGroup = await this.refreshGroup(groupId);
+
+      this._updateConversationList();
 
       return result.success;
     } catch (error) {
@@ -1101,6 +1106,88 @@ class ConversationManager {
       throw error;
     }
   }
+
+
+  _updateConversationList() {
+
+    const conversationPreviews = this.getConversationPreviews();
+
+
+    if (typeof window !== 'undefined') {
+      const event = new CustomEvent('conversationsUpdated', {
+        detail: { conversations: conversationPreviews }
+      });
+      window.dispatchEvent(event);
+    }
+  }
+
+
+  async addGroupMember(groupId, memberPublicKey) {
+    if (!subworldNetwork) {
+      throw new Error('Network service not available');
+    }
+
+    try {
+      // First, get the current group data
+      let group = await this.refreshGroup(groupId);
+
+      // Check if the member is already in the group
+      if (group.members.includes(memberPublicKey)) {
+        return true; // Member already exists, nothing to do
+      }
+
+      console.log(`Adding member ${memberPublicKey} to group ${groupId}`);
+
+      // Call the network service to add the member
+      const result = await subworldNetwork.addGroupMember(groupId, memberPublicKey);
+
+      if (!result.success) {
+        throw new Error('Failed to add group member via network service');
+      }
+
+      // Immediately refresh the group from the network to get updated members list
+      const updatedGroup = await this.refreshGroup(groupId);
+
+      // Update local cache
+      const groupIndex = this.groups.findIndex(g => g.id === groupId);
+      if (groupIndex >= 0) {
+        this.groups[groupIndex] = updatedGroup;
+      }
+
+      // Force update conversation previews
+      const conversationPreviews = this.getConversationPreviews();
+
+      // Dispatch a custom event for components to refresh
+      if (typeof window !== 'undefined') {
+        // Specific group update event
+        const groupEvent = new CustomEvent('groupUpdated', {
+          detail: {
+            groupId,
+            updatedGroup,
+            action: 'memberAdded',
+            memberPublicKey
+          }
+        });
+        window.dispatchEvent(groupEvent);
+
+        // General conversations update event
+        const convEvent = new CustomEvent('conversationsUpdated', {
+          detail: {
+            conversations: conversationPreviews
+          }
+        });
+        window.dispatchEvent(convEvent);
+      }
+
+      return true;
+    } catch (error) {
+      console.error('Error adding member to group:', error);
+      throw error;
+    }
+  }
+
+
+
 
   /**
    * Leave a group
@@ -1133,28 +1220,36 @@ class ConversationManager {
     }
 
     try {
-      // Fetch updated group info
-      const group = await subworldNetwork.getGroup(groupId);
+      // Get a fresh copy of the group from the network
+      const freshGroup = await subworldNetwork.getGroup(groupId);
 
-      // Update local storage
-      if (group) {
-        // Find the group in our list and update it
-        const groupIndex = this.groups.findIndex(g => g.id === groupId);
-        if (groupIndex >= 0) {
-          this.groups[groupIndex] = group;
-        } else {
-          this.groups.push(group);
-        }
-
-        this._persistGroups();
+      if (!freshGroup) {
+        throw new Error(`Failed to fetch group ${groupId} from network`);
       }
 
-      return group;
+      // Update the local copy
+      const groupIndex = this.groups.findIndex(g => g.id === groupId);
+      if (groupIndex >= 0) {
+        this.groups[groupIndex] = freshGroup;
+      } else {
+        // Add to groups list if not found
+        this.groups.push(freshGroup);
+      }
+
+      // Force persistence
+      this._persistGroups();
+
+      return freshGroup;
     } catch (error) {
       console.error('Error refreshing group:', error);
-      return null;
+
+      // Try to get the local version as fallback
+      const localGroup = this.getGroup(groupId);
+      return localGroup;
     }
   }
+
+
 
   getGroupMessages(groupId) {
     if (!groupId) {
@@ -1190,10 +1285,36 @@ class ConversationManager {
   }
 
   /**
-   * Get a group by ID
-   */
+  * Get a group by ID - with improved ID handling
+  * This method now handles 'group-' prefixed IDs automatically
+  */
   getGroup(groupId) {
-    return this.groups.find(g => g.id === groupId);
+    if (!groupId) return null;
+
+
+    let foundGroup = this.groups.find(g => g.id === groupId);
+
+
+    if (!foundGroup && groupId.startsWith('group-')) {
+      const unprefixedId = groupId.substring(6);
+      foundGroup = this.groups.find(g => g.id === unprefixedId);
+
+      if (foundGroup) {
+        console.log(`Found group with unprefixed ID: ${unprefixedId}`);
+      }
+    }
+
+
+    if (!foundGroup && !groupId.startsWith('group-')) {
+      const prefixedId = `group-${groupId}`;
+      foundGroup = this.groups.find(g => g.id === prefixedId);
+
+      if (foundGroup) {
+        console.log(`Found group with prefixed ID: ${prefixedId}`);
+      }
+    }
+
+    return foundGroup;
   }
 
   /**
@@ -1210,26 +1331,28 @@ class ConversationManager {
     localStorage.setItem('subworld_group_messages', JSON.stringify(this.groupMessages));
   }
 
-  // Get group preview data (for group list)
+  /**
+  * Get group previews for the conversation list
+  * This method ensures group IDs are consistently formatted
+  */
   getGroupPreviews() {
     if (!this.groups || !Array.isArray(this.groups)) {
       console.log("Groups not available or invalid format");
       return [];
     }
 
-    // Debug: log the current groups
-    console.log(`getGroupPreviews: Found ${this.groups.length} groups`);
-
     // Filter out any invalid groups
     const validGroups = this.groups.filter(group =>
       group && typeof group === 'object' && group.id);
 
-    if (validGroups.length !== this.groups.length) {
-      console.log(`Filtered out ${this.groups.length - validGroups.length} invalid groups`);
-    }
-
     // Get previews with consistent IDs
     return validGroups.map(group => {
+      // Make sure the ID includes the 'group-' prefix for consistency
+      let formattedId = group.id;
+      if (!formattedId.startsWith('group-')) {
+        formattedId = `group-${formattedId}`;
+      }
+
       // Get the group's messages
       const messages = this.groupMessages[group.id] || [];
 
@@ -1239,9 +1362,10 @@ class ConversationManager {
       );
       const lastMessage = sortedMessages.length > 0 ? sortedMessages[0] : null;
 
-      // Return a clean group preview
+      // Return a clean group preview with consistent ID
       return {
-        id: group.id, // Use the ID exactly as stored
+        id: formattedId, // Use the formatted ID with prefix
+        originalId: group.id, // Keep the original ID for reference
         name: group.name || 'Unnamed Group',
         description: group.description || '',
         members: Array.isArray(group.members) ? group.members.length : 0,
@@ -1258,6 +1382,7 @@ class ConversationManager {
       return timeB - timeA;
     });
   }
+
 
 }
 

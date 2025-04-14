@@ -41,30 +41,31 @@ export default function GroupDetails({ group, onClose, currentUserKey }) {
     return contact?.alias || publicKeyStr
   }
 
-  const handleAddMember = async (e) => {
+  async function handleAddMember(e) {
     e.preventDefault();
     if (!newMemberKey.trim() || !conversationManager) return;
   
     try {
       setAddingMember(true);
-
+  
+      // Call the function to add a member to the group
       if (typeof conversationManager.addGroupMember === 'function') {
         await conversationManager.addGroupMember(group.id, newMemberKey.trim());
       } else {
         await conversationManager.addMemberToGroup(group.id, newMemberKey.trim());
       }
       
-      // Refresh group data
+      // Immediately refresh the group data
       const updatedGroup = await conversationManager.refreshGroup(group.id);
       
-      // Update members list
+      // Update the members list in the current component state
       if (updatedGroup && updatedGroup.members) {
         setMembers(updatedGroup.members);
       }
       
       // Clear input
       setNewMemberKey('');
-
+  
     } catch (error) {
       console.error('Failed to add member:', error);
       alert('Failed to add member. Please check the key and try again.');

@@ -23,6 +23,7 @@ export default function Landing() {
 
     return () => clearTimeout(timer)
   }, [])
+  
   const headingVariants = {
     hidden: { opacity: 0, y: 20 },
     visible: (i) => ({
@@ -35,6 +36,21 @@ export default function Landing() {
     }),
   }
 
+  // Improved navigation handler
+  const handleStartMessaging = (e) => {
+    e.preventDefault() // Prevent default behavior
+    e.stopPropagation() // Stop event propagation
+    console.log('Start messaging button clicked, navigating to /welcome')
+    // Try multiple navigation approaches for compatibility
+    try {
+      router.push('/welcome')
+    } catch (err) {
+      console.error('Router navigation failed:', err)
+      // Fallback to direct navigation
+      window.location.href = '/welcome'
+    }
+  }
+
   return (
     <motion.main
       initial={{ opacity: 0 }}
@@ -42,8 +58,6 @@ export default function Landing() {
       transition={{ duration: 0.5 }}
       className="min-h-screen bg-[#0E0F14] text-white flex flex-col items-center justify-center p-4 md:p-8 relative overflow-hidden"
     >
-
-
       <div className="w-full max-w-4xl mx-auto space-y-16 relative z-10">
         {/* Logo and Text Content */}
         <motion.div
@@ -83,15 +97,25 @@ export default function Landing() {
           transition={{ delay: 0.5, duration: 0.5 }}
           className="space-y-6"
         >
-          <motion.button
+          {/* Interactive element as button for better accessibility */}
+          <motion.a
+            href="/welcome"
+            onClick={handleStartMessaging}
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
-            className="w-full max-w-md mx-auto h-14 text-lg bg-white hover:bg-gray-200 text-black flex items-center justify-center gap-2 rounded-2xl shadow-lg transition-colors duration-300"
-            onClick={() => router.push('/welcome')}
+            className="w-full max-w-md mx-auto h-14 text-lg bg-white hover:bg-gray-200 text-black flex items-center justify-center gap-2 rounded-2xl shadow-lg transition-colors duration-300 cursor-pointer"
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                handleStartMessaging(e)
+              }
+            }}
           >
             Start Messaging
             <ArrowRight className="w-5 h-5" />
-          </motion.button>
+          </motion.a>
 
           <motion.p
             whileHover={{ scale: 1.05 }}
