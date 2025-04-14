@@ -185,8 +185,8 @@ class VoiceService {
   }
 
   /**
- * Set up socket event listeners - Extended for group calls
- */
+  * Set up socket event listeners - Fixed for group calls
+  */
   _setupSocketListeners() {
     if (!this.socket) return;
 
@@ -220,7 +220,18 @@ class VoiceService {
       this.isOutgoingCall = false;
       this.isGroupCall = true;
       this.groupId = data.groupId;
+      this.groupName = data.groupName || 'Group Call';
       this.groupMembers = data.members || [];
+
+      // Initialize group participants map
+      this.groupParticipants.clear();
+      if (Array.isArray(data.members)) {
+        data.members.forEach(memberId => {
+          if (memberId !== this.userPublicKey) {
+            this.groupParticipants.set(memberId, { connected: false });
+          }
+        });
+      }
 
       // Update call state
       this.callState = 'ringing';
@@ -288,6 +299,62 @@ class VoiceService {
 
         // Clean up after a short delay
         setTimeout(() => this._cleanupCall(), 3000);
+      }
+    });
+
+    // ADDED: Critical missing handler for group call participants list
+    this.socket.on('group_call_participants', (data) => {
+      this.log('Received group call participants list:', data);
+      
+      if (this.isGroupCall && this.callId === data.callId && Array.isArray(data.participants)) {
+        this.log(`Received ${data.participants.length} participants for group call ${this.callId}`);
+        
+        // Reset the participants map first
+        this.groupParticipants.clear();
+        
+        // Add each participant to the map
+        data.participants.forEach(participantId => {
+          if (participantId !== this.userPublicKey) { // Skip ourselves
+            // Store the participant with connection status
+            this.groupParticipants.set(participantId, { 
+              connected: false,
+              connecting: false
+            });
+            
+            this.log(`Added participant ${participantId} to connect to`);
+          }
+        });
+        
+        // Change to connected state if we're answering and have participants
+        if (this.callState === 'connecting' && !this.isOutgoingCall) {
+          // A short delay ensures PeerJS is fully initialized
+          setTimeout(() => {
+            if (this.callState === 'connecting') {
+              this.log('Transitioning to connected state after receiving participants list');
+              this.callState = 'connected';
+              this._notifyListeners('call_state_changed', {
+                state: 'connected',
+                isGroup: true,
+                groupId: this.groupId,
+                groupName: this.groupName || 'Group Call'
+              });
+              
+              // Now connect to each participant
+              this.groupParticipants.forEach((data, participantId) => {
+                this.log(`Initiating connection to participant: ${participantId}`);
+                this._connectToGroupParticipant(participantId);
+              });
+            }
+          }, 1000); // Small delay to ensure PeerJS is ready
+        } else if (this.callState === 'connected') {
+          // If we're already connected (as the originator), connect to any new participants
+          this.groupParticipants.forEach((data, participantId) => {
+            if (!data.connected && !data.connecting) {
+              this.log(`Initiating connection to new participant: ${participantId}`);
+              this._connectToGroupParticipant(participantId);
+            }
+          });
+        }
       }
     });
 
@@ -805,8 +872,8 @@ class VoiceService {
   }
 
   /**
-   * Answer an incoming call
-   */
+ * Answer an incoming call - fixed for group calls with better peer ID handling
+ */
   async answerCall() {
     try {
       if (this.callState !== 'ringing' || !this.callId) {
@@ -819,46 +886,60 @@ class VoiceService {
       // Setup local audio stream
       await this._setupLocalStream();
 
-      // Send call accepted message
-      this.socket.emit('call_response', {
-        callId: this.callId,
-        response: 'accepted',
-        recipient: this.userPublicKey,
-        caller: this.remoteUserKey,
-        isGroup: this.isGroupCall
-      });
-
-      // Update call state
-      this.callState = 'connecting';
-      this._notifyListeners('call_state_changed', {
-        state: 'connecting',
-        contact: this.remoteUserKey,
-        isGroup: this.isGroupCall
-      });
-
-      // Reset connection attempt counter
-      this.currentConnectionAttempt = 0;
-
-      // Initiate WebRTC connection
+      // Check if this is a group call or regular call and handle differently
       if (this.isGroupCall) {
-        // Send join message to signaling server so others know we've joined
+        this.log('Answering group call for group:', this.groupId);
+
+        // Update call state first
+        this.callState = 'connecting';
+        this._notifyListeners('call_state_changed', {
+          state: 'connecting',
+          contact: this.remoteUserKey,
+          isGroup: true,
+          groupId: this.groupId,
+          groupName: this.groupName || 'Group Call'
+        });
+
+        // Initialize PeerJS with simplified ID format before sending join
+        await this._initializePeerJS();
+
+        // After PeerJS is initialized, send group_call_join - this ensures our peer ID is ready
         this.socket.emit('group_call_join', {
           callId: this.callId,
           groupId: this.groupId,
           participant: this.userPublicKey
         });
 
-        // Initialize PeerJS
-        await this._initializePeerJS();
+        // Reset connection attempt counter
+        this.currentConnectionAttempt = 0;
 
-        // Connect to all existing participants
-        this.groupParticipants.forEach((data, participantKey) => {
-          if (participantKey !== this.userPublicKey) {
-            this._connectToGroupParticipant(participantKey);
-          }
-        });
+        // Log participant map for debugging
+        this.log('Current group participants:', Array.from(this.groupParticipants.keys()));
+
+        // Don't connect to participants yet - wait for 'group_call_participants' event
+        // The server will send us the list of participants, and then we'll connect to them
+
       } else {
-        // For regular 1:1 calls
+        // For regular 1:1 calls, send call_response as before
+        this.socket.emit('call_response', {
+          callId: this.callId,
+          response: 'accepted',
+          recipient: this.userPublicKey,
+          caller: this.remoteUserKey
+        });
+
+        // Update call state
+        this.callState = 'connecting';
+        this._notifyListeners('call_state_changed', {
+          state: 'connecting',
+          contact: this.remoteUserKey,
+          isGroup: false
+        });
+
+        // Reset connection attempt counter
+        this.currentConnectionAttempt = 0;
+
+        // Initiate WebRTC connection
         this._initiateWebRTCConnection();
       }
 
@@ -1451,9 +1532,8 @@ class VoiceService {
     }
   }
 
-
   /**
-   * Initialize PeerJS for WebRTC connections
+   * Initialize PeerJS for WebRTC connections - Fixed peer ID format
    */
   async _initializePeerJS() {
     // Clear all previous timeouts
@@ -1471,36 +1551,89 @@ class VoiceService {
       }
     }
 
-    // Create unique peer ID based on call ID and our key
+    // SIMPLIFIED PEER ID FORMAT - just userPublicKey-callId
+    // This ensures consistent formatting between caller and answerer
     const myPeerId = `${this.userPublicKey}-${this.callId}`;
-    this.log('My peer ID:', myPeerId);
+
+    this.log('Initializing PeerJS with ID:', myPeerId);
 
     // Adjust PeerJS config based on network type
     const peerConfig = JSON.parse(JSON.stringify(this.peerConfig)); // Deep clone
 
-    // For mobile networks, prioritize TURN servers by using 'relay' policy
-    if (this.isMobileNetwork) {
-      this.log('Using mobile-optimized config with relay servers prioritized');
-      peerConfig.config.iceTransportPolicy = 'relay';
-    }
-
     // Initialize PeerJS with configuration
     this.peer = new Peer(myPeerId, peerConfig);
+
+    // Flag to track if we've connected to the PeerJS server
+    let peerServerConnected = false;
 
     // Set up event handlers
     this.peer.on('open', (id) => {
       this.log('PeerJS connection opened with ID:', id);
+      peerServerConnected = true;
+
+      // For group calls, this is a good time to notify that we're ready
+      if (this.isGroupCall) {
+        this.log('PeerJS ready for group call participants');
+
+        // If we've received the participant list but haven't connected yet
+        if (this.groupParticipants.size > 0) {
+          // Update call state to connected if we're still in connecting state
+          if (this.callState === 'connecting') {
+            this.callState = 'connected';
+            this._notifyListeners('call_state_changed', {
+              state: 'connected',
+              isGroup: true,
+              groupId: this.groupId,
+              groupName: this.groupName || 'Group Call'
+            });
+          }
+
+          // Try to connect to all participants
+          this.groupParticipants.forEach((data, participantKey) => {
+            this.log(`Initiating connection to participant ${participantKey}`);
+            this._connectToGroupParticipant(participantKey);
+          });
+        }
+      }
     });
 
     this.peer.on('error', (err) => {
-      this.log('PeerJS error:', err.type);
+      this.log('PeerJS error:', err.type, err);
 
-      // Handle connection errors
+      // Handle different types of PeerJS errors
       if (err.type === 'peer-unavailable') {
-        // This can happen in group calls when multiple connections are being established
-        this.log('Peer unavailable, may retry later if in group call');
+        // For group calls, this is normal when someone hasn't joined yet
+        if (this.isGroupCall) {
+          const peerIdStr = err.message.match(/Could not connect to peer (.+)/)?.[1];
+          if (peerIdStr) {
+            this.log(`Peer unavailable: ${peerIdStr}, will retry later`);
+
+            // Extract the participant's public key from the peer ID
+            const participantKey = peerIdStr.split('-')[0];
+
+            // If this is a valid participant, schedule a retry
+            if (participantKey && this.groupParticipants.has(participantKey)) {
+              setTimeout(() => {
+                if (this.callState === 'connected') {
+                  this.log(`Retrying connection to participant ${participantKey} after peer-unavailable`);
+                  this._connectToGroupParticipant(participantKey);
+                }
+              }, 5000); // 5 second retry
+            }
+          }
+        }
       } else if (err.type === 'network' || err.type === 'server-error' || err.type === 'socket-error') {
-        this.log('Network or server error in PeerJS');
+        this.log('Network or server error in PeerJS, retrying connection if in active call');
+
+        // If we're in a group call, try to reinitialize PeerJS after delay
+        if (this.isGroupCall && (this.callState === 'connecting' || this.callState === 'connected')) {
+          setTimeout(() => {
+            if ((this.callState === 'connecting' || this.callState === 'connected') && !peerServerConnected) {
+              this.log('Retrying PeerJS initialization after error');
+              this._initializePeerJS();
+            }
+          }, 5000); // 5 second retry
+        }
       }
     });
 
@@ -1508,60 +1641,31 @@ class VoiceService {
     this.peer.on('call', (incomingCall) => {
       this.log('Received incoming PeerJS call from:', incomingCall.peer);
 
-      // Enhanced answer options
-      const answerOptions = {
-        sdpTransform: (sdp) => {
-          // Add additional SDP modifications for better mobile compatibility
-          let modifiedSdp = sdp;
-
-          // Force opus codec with specific parameters for better audio
-          modifiedSdp = modifiedSdp.replace('useinbandfec=1', 'useinbandfec=1; stereo=0; sprop-stereo=0; maxaveragebitrate=24000');
-
-          // Add b=AS line to limit bandwidth
-          const bandwidthValue = this.isMobileNetwork ? '30' : '50'; // kbps
-          const lines = modifiedSdp.split('\r\n');
-          const audioIndex = lines.findIndex(line => line.startsWith('m=audio'));
-
-          if (audioIndex !== -1) {
-            // Add bandwidth restriction after the m=audio line
-            lines.splice(audioIndex + 1, 0, `b=AS:${bandwidthValue}`);
-            modifiedSdp = lines.join('\r\n');
-          }
-
-          // Set audio to high priority
-          modifiedSdp = modifiedSdp.replace(/a=mid:0/g, 'a=mid:0\r\na=content:main\r\na=priority:high');
-
-          return modifiedSdp;
-        }
-      };
-
       // Extract the caller's public key from the peer ID
       const callerPeerId = incomingCall.peer;
       const callerPublicKey = callerPeerId.split('-')[0];
 
-      // Verify audio tracks are enabled before answering
-      this.localStream.getAudioTracks().forEach(track => {
-        if (!track.enabled) {
-          track.enabled = true;
-          this.log('Re-enabled audio track before answering call');
-        }
-      });
+      this.log(`Call from peer ${callerPeerId}, extracted public key: ${callerPublicKey}`);
 
-      // Answer the call with our local stream and options
-      incomingCall.answer(this.localStream, answerOptions);
+      // Answer the call with our local stream
+      incomingCall.answer(this.localStream);
 
       // If in a group call, track this connection
       if (this.isGroupCall) {
         if (this.groupParticipants.has(callerPublicKey)) {
           const participantData = this.groupParticipants.get(callerPublicKey);
           participantData.connection = incomingCall;
+          participantData.connecting = true;
           this.groupParticipants.set(callerPublicKey, participantData);
         } else {
-          // New participant
+          // New participant we didn't know about
           this.groupParticipants.set(callerPublicKey, {
             connection: incomingCall,
-            connected: false
+            connected: false,
+            connecting: true
           });
+
+          this.log(`Added new participant ${callerPublicKey} from incoming call`);
         }
 
         // Handle this participant's stream
@@ -1575,7 +1679,6 @@ class VoiceService {
 
     return this.peer;
   }
-
   /**
   * Reject an incoming call - works for both 1:1 and group calls
   */
@@ -1612,20 +1715,33 @@ class VoiceService {
   }
 
   /**
-   * Connect to a specific group participant
-   * @param {string} participantKey - The participant's public key
-   * @private
-   */
+  * Connect to a specific group participant - Fixed peer ID format
+  * @param {string} participantKey - The participant's public key
+  * @private
+  */
   _connectToGroupParticipant(participantKey) {
     if (!this.peer || !this.localStream) {
       this.log(`Cannot connect to participant ${participantKey} - peer or stream not ready`);
+
+      // Set a retry after peer and stream are ready
+      if (this.isGroupCall && this.callState === 'connected') {
+        setTimeout(() => {
+          if (this.peer && this.localStream && this.groupParticipants.has(participantKey)) {
+            this.log(`Retrying connection to participant ${participantKey} after delay`);
+            this._connectToGroupParticipant(participantKey);
+          }
+        }, 2000);
+      }
       return;
     }
 
     try {
-      // Create a unique ID for this connection
+      // Create a unique ID for this connection - FIXED FORMAT
+      // Format should be: participantPublicKey-callId
       const remotePeerId = `${participantKey}-${this.callId}`;
-      this.log(`Connecting to group participant: ${participantKey} with peer ID ${remotePeerId}`);
+
+      this.log(`Connecting to group participant: ${participantKey}`);
+      this.log(`Remote peer ID: ${remotePeerId}`);
 
       // Enhanced call options for better audio
       const callOptions = {
@@ -1633,61 +1749,100 @@ class VoiceService {
           callId: this.callId,
           groupId: this.groupId,
           isGroup: true
-        },
-        sdpTransform: (sdp) => {
-          // Add SDP modifications for better audio quality
-          let modifiedSdp = sdp;
-
-          // Force opus codec with specific parameters
-          modifiedSdp = modifiedSdp.replace('useinbandfec=1', 'useinbandfec=1; stereo=0; sprop-stereo=0; maxaveragebitrate=24000');
-
-          // Add bandwidth restriction
-          const bandwidthValue = this.isMobileNetwork ? '30' : '50'; // kbps
-          const lines = modifiedSdp.split('\r\n');
-          const audioIndex = lines.findIndex(line => line.startsWith('m=audio'));
-
-          if (audioIndex !== -1) {
-            // Add bandwidth restriction after the m=audio line
-            lines.splice(audioIndex + 1, 0, `b=AS:${bandwidthValue}`);
-            modifiedSdp = lines.join('\r\n');
-          }
-
-          // Set audio priority
-          modifiedSdp = modifiedSdp.replace(/a=mid:0/g, 'a=mid:0\r\na=content:main\r\na=priority:high');
-
-          return modifiedSdp;
         }
       };
+
+      // Check if we already have a connection to this participant
+      if (this.groupParticipants.has(participantKey)) {
+        const participantData = this.groupParticipants.get(participantKey);
+        if (participantData.connection) {
+          this.log(`Already have a connection to ${participantKey}, checking if it's active`);
+
+          // If the connection is active and we have a stream, don't create a new one
+          if (participantData.connected && participantData.stream) {
+            this.log(`Connection to ${participantKey} is already active, not recreating`);
+            return;
+          }
+
+          // Close the existing connection to create a new one
+          try {
+            participantData.connection.close();
+          } catch (err) {
+            this.log(`Error closing existing connection to ${participantKey}:`, err);
+          }
+        }
+      }
+
+      // Log the call attempt details for debugging
+      this.log(`Calling peer with ID: ${remotePeerId}`);
+      this.log(`Local peer ID: ${this.peer.id}`);
 
       // Make the call to this participant
       const connection = this.peer.call(remotePeerId, this.localStream, callOptions);
 
       if (connection) {
         // Store the connection
+        this.log(`Created connection to participant ${participantKey}`);
+
         if (this.groupParticipants.has(participantKey)) {
           const participantData = this.groupParticipants.get(participantKey);
           participantData.connection = connection;
+          participantData.connecting = true; // Add a connecting state
           this.groupParticipants.set(participantKey, participantData);
         } else {
-          this.groupParticipants.set(participantKey, { connection, connected: false });
+          this.groupParticipants.set(participantKey, {
+            connection,
+            connected: false,
+            connecting: true
+          });
         }
 
         // Handle this connection
         this._handlePeerConnectionForGroup(connection, participantKey);
+
+        // Set a timeout to retry if not connected after a while
+        setTimeout(() => {
+          if (this.groupParticipants.has(participantKey)) {
+            const participantData = this.groupParticipants.get(participantKey);
+            if (!participantData.connected && this.callState === 'connected') {
+              this.log(`Connection to ${participantKey} not established after timeout, retrying`);
+              this._connectToGroupParticipant(participantKey);
+            }
+          }
+        }, 10000); // 10 second timeout for connection
       } else {
         this.log(`Failed to create connection to participant ${participantKey}`);
+
+        // Set a retry after a delay
+        setTimeout(() => {
+          if (this.isGroupCall && this.callState === 'connected' &&
+            this.groupParticipants.has(participantKey)) {
+            this.log(`Retrying connection to participant ${participantKey} after failure`);
+            this._connectToGroupParticipant(participantKey);
+          }
+        }, 3000);
       }
     } catch (error) {
       console.error(`Error connecting to group participant ${participantKey}:`, error);
+
+      // Set a retry after error
+      setTimeout(() => {
+        if (this.isGroupCall && this.callState === 'connected' &&
+          this.groupParticipants.has(participantKey)) {
+          this.log(`Retrying connection to participant ${participantKey} after error`);
+          this._connectToGroupParticipant(participantKey);
+        }
+      }, 5000);
     }
   }
 
+
   /**
-   * Handle peer connection for a group participant
-   * @param {Object} connection - The peer connection
-   * @param {string} participantKey - The participant's public key
-   * @private
-   */
+  * Handle peer connection for a group participant - Improved implementation
+  * @param {Object} connection - The peer connection
+  * @param {string} participantKey - The participant's public key
+  * @private
+  */
   _handlePeerConnectionForGroup(connection, participantKey) {
     if (!connection) {
       this.log(`No connection to handle for participant ${participantKey}`);
@@ -1698,13 +1853,30 @@ class VoiceService {
 
     // Handle remote stream
     connection.on('stream', (stream) => {
-      this.log(`Received stream from participant ${participantKey}`);
+      this.log(`Received stream from participant ${participantKey} with ${stream.getTracks().length} tracks`);
+
+      // Verify the stream has audio tracks
+      const audioTracks = stream.getAudioTracks();
+      if (audioTracks.length === 0) {
+        this.log(`Warning: Stream from ${participantKey} has no audio tracks`);
+      } else {
+        this.log(`Received ${audioTracks.length} audio tracks from ${participantKey}`);
+
+        // Make sure tracks are enabled
+        audioTracks.forEach(track => {
+          if (!track.enabled) {
+            this.log(`Enabling disabled track from ${participantKey}`);
+            track.enabled = true;
+          }
+        });
+      }
 
       // Store the stream with the participant data
       if (this.groupParticipants.has(participantKey)) {
         const participantData = this.groupParticipants.get(participantKey);
         participantData.stream = stream;
         participantData.connected = true;
+        participantData.connecting = false;
         this.groupParticipants.set(participantKey, participantData);
 
         // Notify listeners about this stream
@@ -1719,8 +1891,59 @@ class VoiceService {
           this._notifyListeners('call_state_changed', {
             state: 'connected',
             isGroup: true,
-            groupId: this.groupId
+            groupId: this.groupId,
+            groupName: this.groupName || 'Group Call'
           });
+        }
+
+        // Important: Create audio element to play this participant's audio
+        try {
+          // Create a new audio element for this participant
+          const audioEl = document.createElement('audio');
+          audioEl.id = `group-audio-${participantKey}`;
+          audioEl.autoplay = true;
+          audioEl.playsInline = true;
+          audioEl.controls = false;
+          audioEl.style.display = 'none';
+
+          // Assign the stream to the audio element
+          audioEl.srcObject = stream;
+
+          // Add error handling
+          audioEl.onerror = (err) => {
+            this.log(`Error with audio element for ${participantKey}:`, err);
+          };
+
+          // Safe play method with error handling
+          const playAudio = () => {
+            const playPromise = audioEl.play();
+            if (playPromise !== undefined) {
+              playPromise.catch(error => {
+                this.log(`Error playing audio for ${participantKey}:`, error);
+
+                // If it's an autoplay policy error, try again on user interaction
+                if (error.name === 'NotAllowedError') {
+                  document.addEventListener('click', () => {
+                    audioEl.play().catch(e => this.log(`Still couldn't play audio:`, e));
+                  }, { once: true });
+                }
+              });
+            }
+          };
+
+          // Try to play the audio
+          playAudio();
+
+          // Add the audio element to the document body
+          document.body.appendChild(audioEl);
+
+          // Store the element reference for cleanup
+          participantData.audioElement = audioEl;
+          this.groupParticipants.set(participantKey, participantData);
+
+          this.log(`Created audio element for participant ${participantKey}`);
+        } catch (audioErr) {
+          this.log(`Error creating audio element for ${participantKey}:`, audioErr);
         }
       }
     });
@@ -1732,14 +1955,39 @@ class VoiceService {
       // Update participant data
       if (this.groupParticipants.has(participantKey)) {
         const participantData = this.groupParticipants.get(participantKey);
+
+        // Clean up audio element if it exists
+        if (participantData.audioElement) {
+          try {
+            participantData.audioElement.srcObject = null;
+            participantData.audioElement.remove();
+          } catch (e) {
+            this.log(`Error removing audio element for ${participantKey}:`, e);
+          }
+        }
+
         participantData.connected = false;
         participantData.connection = null;
+        participantData.connecting = false;
         this.groupParticipants.set(participantKey, participantData);
 
         // Notify listeners
         this._notifyListeners('participant_disconnected', {
           participant: participantKey
         });
+
+        // Try to reconnect if we're still in an active call
+        if (this.callState === 'connected') {
+          setTimeout(() => {
+            if (this.callState === 'connected' && this.groupParticipants.has(participantKey)) {
+              const currentData = this.groupParticipants.get(participantKey);
+              if (!currentData.connected && !currentData.connecting) {
+                this.log(`Connection closed, attempting to reconnect to ${participantKey}`);
+                this._connectToGroupParticipant(participantKey);
+              }
+            }
+          }, 3000); // Wait 3 seconds before retry
+        }
       }
 
       // Check if we still have any active connections
@@ -1758,10 +2006,14 @@ class VoiceService {
           });
 
           if (stillNoConnections && this.callState === 'connected') {
-            this.log('All group participants disconnected, ending call');
-            this.endCall();
+            this.log('All group participants disconnected, attempting global reconnect');
+
+            // Try to reconnect to all participants
+            this.groupParticipants.forEach((data, partKey) => {
+              this._connectToGroupParticipant(partKey);
+            });
           }
-        }, 10000); // 10 second grace period
+        }, 5000); // 5 second grace period
       }
     });
 
@@ -1773,6 +2025,7 @@ class VoiceService {
       if (this.groupParticipants.has(participantKey)) {
         const participantData = this.groupParticipants.get(participantKey);
         participantData.connected = false;
+        participantData.connecting = false;
         participantData.error = err.message || 'Connection error';
         this.groupParticipants.set(participantKey, participantData);
 
@@ -1780,14 +2033,68 @@ class VoiceService {
         setTimeout(() => {
           if (this.callState === 'connected' && this.groupParticipants.has(participantKey)) {
             const currentData = this.groupParticipants.get(participantKey);
-            if (!currentData.connected) {
-              this.log(`Attempting to reconnect to participant ${participantKey}`);
+            if (!currentData.connected && !currentData.connecting) {
+              this.log(`Error in connection, attempting to reconnect to ${participantKey}`);
               this._connectToGroupParticipant(participantKey);
             }
           }
         }, 3000); // Wait 3 seconds before retry
       }
     });
+
+    // Access the underlying RTCPeerConnection for advanced monitoring
+    if (connection.peerConnection) {
+      const rtcPeerConn = connection.peerConnection;
+
+      // Listen for ICE connection state changes
+      rtcPeerConn.oniceconnectionstatechange = () => {
+        this.log(`ICE connection state for ${participantKey}: ${rtcPeerConn.iceConnectionState}`);
+
+        if (rtcPeerConn.iceConnectionState === 'failed') {
+          this.log(`ICE connection failed for ${participantKey} - attempting to restart ICE`);
+
+          // Try to restart ICE if supported
+          if (rtcPeerConn.restartIce) {
+            rtcPeerConn.restartIce();
+            this.log(`ICE restart requested for ${participantKey}`);
+          } else {
+            // Fallback: create offer with iceRestart flag
+            rtcPeerConn.createOffer({ iceRestart: true })
+              .then(offer => rtcPeerConn.setLocalDescription(offer))
+              .then(() => {
+                this.log(`ICE restart via createOffer successful for ${participantKey}`);
+              })
+              .catch(err => {
+                console.error(`ICE restart failed for ${participantKey}:`, err);
+
+                // If ICE restart fails, try to create a completely new connection
+                if (this.callState === 'connected') {
+                  setTimeout(() => {
+                    this.log(`ICE restart failed, creating new connection to ${participantKey}`);
+                    this._connectToGroupParticipant(participantKey);
+                  }, 2000);
+                }
+              });
+          }
+        }
+
+        // Handle disconnections more gracefully
+        if (rtcPeerConn.iceConnectionState === 'disconnected' &&
+          this.callState === 'connected') {
+          this.log(`ICE connection disconnected for ${participantKey} - waiting to see if it reconnects`);
+
+          // Wait a bit to see if it reconnects
+          setTimeout(() => {
+            if ((rtcPeerConn.iceConnectionState === 'disconnected' ||
+              rtcPeerConn.iceConnectionState === 'failed') &&
+              this.callState === 'connected') {
+              this.log(`ICE connection remained disconnected for ${participantKey}, creating new connection`);
+              this._connectToGroupParticipant(participantKey);
+            }
+          }, 5000);
+        }
+      };
+    }
   }
 
   /**
