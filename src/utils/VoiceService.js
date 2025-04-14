@@ -305,26 +305,26 @@ class VoiceService {
     // ADDED: Critical missing handler for group call participants list
     this.socket.on('group_call_participants', (data) => {
       this.log('Received group call participants list:', data);
-      
+
       if (this.isGroupCall && this.callId === data.callId && Array.isArray(data.participants)) {
         this.log(`Received ${data.participants.length} participants for group call ${this.callId}`);
-        
+
         // Reset the participants map first
         this.groupParticipants.clear();
-        
+
         // Add each participant to the map
         data.participants.forEach(participantId => {
           if (participantId !== this.userPublicKey) { // Skip ourselves
             // Store the participant with connection status
-            this.groupParticipants.set(participantId, { 
+            this.groupParticipants.set(participantId, {
               connected: false,
               connecting: false
             });
-            
+
             this.log(`Added participant ${participantId} to connect to`);
           }
         });
-        
+
         // Change to connected state if we're answering and have participants
         if (this.callState === 'connecting' && !this.isOutgoingCall) {
           // A short delay ensures PeerJS is fully initialized
@@ -338,7 +338,7 @@ class VoiceService {
                 groupId: this.groupId,
                 groupName: this.groupName || 'Group Call'
               });
-              
+
               // Now connect to each participant
               this.groupParticipants.forEach((data, participantId) => {
                 this.log(`Initiating connection to participant: ${participantId}`);
@@ -631,7 +631,7 @@ class VoiceService {
   }
 
   /**
-  * Initiate a group call
+  * Initiate a group call - FIXED VERSION
   * @param {string} groupId - The group ID
   * @param {string} groupName - Name of the group
   * @param {Array} members - Array of member public keys
@@ -645,17 +645,25 @@ class VoiceService {
         return false;
       }
 
-      this.log('Initiating group call:', groupId, members);
+      // CRITICAL FIX: Ensure groupId is valid and consistent
+      let normalizedGroupId = groupId;
+      // Remove 'group-' prefix if present for consistency
+      if (normalizedGroupId.startsWith('group-')) {
+        normalizedGroupId = normalizedGroupId.substring(6);
+      }
+
+      this.log('Initiating group call:', normalizedGroupId, members);
       this.isOutgoingCall = true;
       this.isGroupCall = true;
-      this.groupId = groupId;
-      this.groupMembers = members;
+      this.groupId = normalizedGroupId;
+      this.groupName = groupName || 'Group Call';
+      this.groupMembers = Array.isArray(members) ? [...members] : [];
 
       // Request microphone and establish local stream
       await this._setupLocalStream();
 
       // Generate a unique call ID
-      this.callId = `grpcall-${groupId}-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+      this.callId = `grpcall-${normalizedGroupId}-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
       this.log('Generated group call ID:', this.callId);
 
       // Start tracking connection time
@@ -666,31 +674,54 @@ class VoiceService {
 
       // Initialize empty participants map with the group members
       this.groupParticipants.clear();
-      members.forEach(member => {
-        if (member !== this.userPublicKey) { // Skip ourselves
-          this.groupParticipants.set(member, { connected: false });
-        }
-      });
+      if (Array.isArray(members)) {
+        members.forEach(member => {
+          if (member !== this.userPublicKey) { // Skip ourselves
+            this.groupParticipants.set(member, { connected: false });
+          }
+        });
+      } else {
+        this.log('Warning: No members array provided for group call');
+      }
+
+      // CRITICAL FIX: Initialize PeerJS first, wait for it to be ready
+      await this._initializePeerJS();
 
       // Send group call request to signaling server
       this.socket.emit('group_call_request', {
         callId: this.callId,
         caller: this.userPublicKey,
-        groupId: groupId,
-        groupName: groupName,
-        members: members
+        groupId: normalizedGroupId,
+        groupName: this.groupName,
+        members: this.groupMembers
       });
 
       // Update call state to ringing
       this.callState = 'ringing';
       this._notifyListeners('call_state_changed', {
         state: 'ringing',
-        groupId: groupId,
-        groupName: groupName,
-        members: members,
+        groupId: normalizedGroupId,
+        groupName: this.groupName,
+        members: this.groupMembers,
         outgoing: true,
         isGroup: true
       });
+
+      // Set a timeout to transition from ringing to connected for initiator
+      // This is important since the initiator needs to be ready to accept connections
+      setTimeout(() => {
+        if (this.callState === 'ringing') {
+          this.log('Transitioning from ringing to connected state for group call initiator');
+          this.callState = 'connected';
+          this._notifyListeners('call_state_changed', {
+            state: 'connected',
+            isGroup: true,
+            groupId: this.groupId,
+            groupName: this.groupName,
+            members: this.groupMembers
+          });
+        }
+      }, 5000); // 5 seconds should be enough to notify others
 
       return true;
     } catch (error) {
@@ -699,6 +730,7 @@ class VoiceService {
       throw error;
     }
   }
+  
   /**
    * Setup local audio stream with optimal settings
    */
@@ -872,8 +904,8 @@ class VoiceService {
   }
 
   /**
- * Answer an incoming call - fixed for group calls with better peer ID handling
- */
+  * Answer an incoming group call - FIXED VERSION
+  */
   async answerCall() {
     try {
       if (this.callState !== 'ringing' || !this.callId) {
@@ -900,24 +932,44 @@ class VoiceService {
           groupName: this.groupName || 'Group Call'
         });
 
-        // Initialize PeerJS with simplified ID format before sending join
-        await this._initializePeerJS();
+        // CRITICAL FIX: First initialize PeerJS with Promise to ensure it's ready
+        try {
+          await this._initializePeerJS();
+          this.log('PeerJS initialized successfully, ready to join call');
 
-        // After PeerJS is initialized, send group_call_join - this ensures our peer ID is ready
-        this.socket.emit('group_call_join', {
-          callId: this.callId,
-          groupId: this.groupId,
-          participant: this.userPublicKey
-        });
+          // After PeerJS is initialized, send group_call_join
+          this.socket.emit('group_call_join', {
+            callId: this.callId,
+            groupId: this.groupId,
+            participant: this.userPublicKey
+          });
 
-        // Reset connection attempt counter
-        this.currentConnectionAttempt = 0;
+          // Reset connection attempt counter
+          this.currentConnectionAttempt = 0;
 
-        // Log participant map for debugging
-        this.log('Current group participants:', Array.from(this.groupParticipants.keys()));
+          // Set a fallback timer to transition to connected state even if no participants join
+          setTimeout(() => {
+            if (this.callState === 'connecting') {
+              this.log('No participants joined yet, transitioning to connected state anyway');
+              this.callState = 'connected';
+              this._notifyListeners('call_state_changed', {
+                state: 'connected',
+                isGroup: true,
+                groupId: this.groupId,
+                groupName: this.groupName || 'Group Call'
+              });
+            }
+          }, 8000);
 
-        // Don't connect to participants yet - wait for 'group_call_participants' event
-        // The server will send us the list of participants, and then we'll connect to them
+        } catch (peerError) {
+          console.error('Failed to initialize PeerJS:', peerError);
+          // Still send join message even if PeerJS fails - it might recover
+          this.socket.emit('group_call_join', {
+            callId: this.callId,
+            groupId: this.groupId,
+            participant: this.userPublicKey
+          });
+        }
 
       } else {
         // For regular 1:1 calls, send call_response as before
@@ -950,6 +1002,7 @@ class VoiceService {
       throw error;
     }
   }
+
 
   _initiateWebRTCConnection() {
     return this._enhancedWebRTCConnection();
@@ -1533,8 +1586,8 @@ class VoiceService {
   }
 
   /**
-   * Initialize PeerJS for WebRTC connections - Fixed peer ID format
-   */
+ * Initialize PeerJS for WebRTC connections - FIXED VERSION
+ */
   async _initializePeerJS() {
     // Clear all previous timeouts
     this._clearAllTimeouts();
@@ -1549,9 +1602,10 @@ class VoiceService {
       } catch (e) {
         console.warn('Error destroying existing peer:', e);
       }
+      this.peer = null;
     }
 
-    // SIMPLIFIED PEER ID FORMAT - just userPublicKey-callId
+    // CRITICAL FIX: Simplify the peer ID format - just userPublicKey-callId
     // This ensures consistent formatting between caller and answerer
     const myPeerId = `${this.userPublicKey}-${this.callId}`;
 
@@ -1560,125 +1614,158 @@ class VoiceService {
     // Adjust PeerJS config based on network type
     const peerConfig = JSON.parse(JSON.stringify(this.peerConfig)); // Deep clone
 
-    // Initialize PeerJS with configuration
-    this.peer = new Peer(myPeerId, peerConfig);
+    // For mobile networks, prioritize TURN servers by using 'relay' policy
+    if (this.isMobileNetwork) {
+      this.log('Using mobile-optimized config with relay servers prioritized');
+      peerConfig.config.iceTransportPolicy = 'relay';
+    }
 
-    // Flag to track if we've connected to the PeerJS server
-    let peerServerConnected = false;
+    // IMPROVED: Create a Promise to know when peer is open
+    return new Promise((resolve, reject) => {
+      // Initialize PeerJS with configuration
+      this.peer = new Peer(myPeerId, peerConfig);
 
-    // Set up event handlers
-    this.peer.on('open', (id) => {
-      this.log('PeerJS connection opened with ID:', id);
-      peerServerConnected = true;
+      // Flag to track if we've connected to the PeerJS server
+      let peerServerConnected = false;
 
-      // For group calls, this is a good time to notify that we're ready
-      if (this.isGroupCall) {
-        this.log('PeerJS ready for group call participants');
-
-        // If we've received the participant list but haven't connected yet
-        if (this.groupParticipants.size > 0) {
-          // Update call state to connected if we're still in connecting state
-          if (this.callState === 'connecting') {
-            this.callState = 'connected';
-            this._notifyListeners('call_state_changed', {
-              state: 'connected',
-              isGroup: true,
-              groupId: this.groupId,
-              groupName: this.groupName || 'Group Call'
-            });
-          }
-
-          // Try to connect to all participants
-          this.groupParticipants.forEach((data, participantKey) => {
-            this.log(`Initiating connection to participant ${participantKey}`);
-            this._connectToGroupParticipant(participantKey);
-          });
+      // Use a timeout to ensure we don't wait forever
+      const connectionTimeout = setTimeout(() => {
+        if (!peerServerConnected) {
+          this.log('PeerJS connection timed out, resolving anyway');
+          resolve(this.peer); // Resolve with the peer even if not connected
         }
-      }
-    });
+      }, 8000);
 
-    this.peer.on('error', (err) => {
-      this.log('PeerJS error:', err.type, err);
+      // Set up event handlers
+      this.peer.on('open', (id) => {
+        this.log('PeerJS connection opened with ID:', id);
+        peerServerConnected = true;
+        clearTimeout(connectionTimeout);
 
-      // Handle different types of PeerJS errors
-      if (err.type === 'peer-unavailable') {
-        // For group calls, this is normal when someone hasn't joined yet
+        // Reset connection attempt counter on successful connection
+        this.currentConnectionAttempt = 0;
+
+        // For group calls, this is a good time to notify that we're ready
         if (this.isGroupCall) {
-          const peerIdStr = err.message.match(/Could not connect to peer (.+)/)?.[1];
-          if (peerIdStr) {
-            this.log(`Peer unavailable: ${peerIdStr}, will retry later`);
+          this.log('PeerJS ready for group call participants');
 
-            // Extract the participant's public key from the peer ID
-            const participantKey = peerIdStr.split('-')[0];
+          // Add a small delay before connecting to participants to ensure PeerJS is fully ready
+          setTimeout(() => {
+            // If we've received the participant list but haven't connected yet
+            if (this.groupParticipants.size > 0) {
+              // Update call state to connected if we're still in connecting state
+              if (this.callState === 'connecting') {
+                this.callState = 'connected';
+                this._notifyListeners('call_state_changed', {
+                  state: 'connected',
+                  isGroup: true,
+                  groupId: this.groupId,
+                  groupName: this.groupName || 'Group Call'
+                });
+              }
 
-            // If this is a valid participant, schedule a retry
-            if (participantKey && this.groupParticipants.has(participantKey)) {
-              setTimeout(() => {
-                if (this.callState === 'connected') {
-                  this.log(`Retrying connection to participant ${participantKey} after peer-unavailable`);
-                  this._connectToGroupParticipant(participantKey);
-                }
-              }, 5000); // 5 second retry
+              // Try to connect to all participants
+              this.groupParticipants.forEach((data, participantKey) => {
+                this.log(`Initiating connection to participant ${participantKey}`);
+                this._connectToGroupParticipant(participantKey);
+              });
+            }
+          }, 1000); // Small delay to ensure PeerJS is fully ready
+        }
+
+        resolve(this.peer);
+      });
+
+      this.peer.on('error', (err) => {
+        this.log('PeerJS error:', err.type, err);
+
+        // Handle different types of PeerJS errors
+        if (err.type === 'peer-unavailable') {
+          // For group calls, this is normal when someone hasn't joined yet
+          if (this.isGroupCall) {
+            const peerIdStr = err.message.match(/Could not connect to peer (.+)/)?.[1];
+            if (peerIdStr) {
+              this.log(`Peer unavailable: ${peerIdStr}, will retry later`);
+
+              // Extract the participant's public key from the peer ID
+              const participantKey = peerIdStr.split('-')[0];
+
+              // If this is a valid participant, schedule a retry
+              if (participantKey && this.groupParticipants.has(participantKey)) {
+                setTimeout(() => {
+                  if (this.callState === 'connected') {
+                    this.log(`Retrying connection to participant ${participantKey} after peer-unavailable`);
+                    // Increment retry counter
+                    this.currentConnectionAttempt++;
+                    this._connectToGroupParticipant(participantKey);
+                  }
+                }, 5000); // 5 second retry
+              }
             }
           }
+        } else if (err.type === 'network' || err.type === 'server-error' || err.type === 'socket-error') {
+          this.log('Network or server error in PeerJS, retrying connection if in active call');
+
+          // If we're in a group call, try to reinitialize PeerJS after delay
+          if (this.isGroupCall && (this.callState === 'connecting' || this.callState === 'connected')) {
+            setTimeout(() => {
+              if ((this.callState === 'connecting' || this.callState === 'connected') && !peerServerConnected) {
+                this.log('Retrying PeerJS initialization after error');
+                this._initializePeerJS().catch(e =>
+                  console.error('Error reinitializing PeerJS:', e)
+                );
+              }
+            }, 5000); // 5 second retry
+          }
         }
-      } else if (err.type === 'network' || err.type === 'server-error' || err.type === 'socket-error') {
-        this.log('Network or server error in PeerJS, retrying connection if in active call');
 
-        // If we're in a group call, try to reinitialize PeerJS after delay
-        if (this.isGroupCall && (this.callState === 'connecting' || this.callState === 'connected')) {
-          setTimeout(() => {
-            if ((this.callState === 'connecting' || this.callState === 'connected') && !peerServerConnected) {
-              this.log('Retrying PeerJS initialization after error');
-              this._initializePeerJS();
-            }
-          }, 5000); // 5 second retry
+        if (!peerServerConnected) {
+          reject(err);
         }
-      }
-    });
+      });
 
-    // Listen for incoming calls (important for group calls)
-    this.peer.on('call', (incomingCall) => {
-      this.log('Received incoming PeerJS call from:', incomingCall.peer);
+      // Listen for incoming calls (important for group calls)
+      this.peer.on('call', (incomingCall) => {
+        this.log('Received incoming PeerJS call from:', incomingCall.peer);
 
-      // Extract the caller's public key from the peer ID
-      const callerPeerId = incomingCall.peer;
-      const callerPublicKey = callerPeerId.split('-')[0];
+        // Extract the caller's public key from the peer ID
+        const callerPeerId = incomingCall.peer;
+        const callerPublicKey = callerPeerId.split('-')[0];
 
-      this.log(`Call from peer ${callerPeerId}, extracted public key: ${callerPublicKey}`);
+        this.log(`Call from peer ${callerPeerId}, extracted public key: ${callerPublicKey}`);
 
-      // Answer the call with our local stream
-      incomingCall.answer(this.localStream);
+        // Answer the call with our local stream
+        incomingCall.answer(this.localStream);
 
-      // If in a group call, track this connection
-      if (this.isGroupCall) {
-        if (this.groupParticipants.has(callerPublicKey)) {
-          const participantData = this.groupParticipants.get(callerPublicKey);
-          participantData.connection = incomingCall;
-          participantData.connecting = true;
-          this.groupParticipants.set(callerPublicKey, participantData);
+        // If in a group call, track this connection
+        if (this.isGroupCall) {
+          if (this.groupParticipants.has(callerPublicKey)) {
+            const participantData = this.groupParticipants.get(callerPublicKey);
+            participantData.connection = incomingCall;
+            participantData.connecting = true;
+            this.groupParticipants.set(callerPublicKey, participantData);
+          } else {
+            // New participant we didn't know about
+            this.groupParticipants.set(callerPublicKey, {
+              connection: incomingCall,
+              connected: false,
+              connecting: true
+            });
+
+            this.log(`Added new participant ${callerPublicKey} from incoming call`);
+          }
+
+          // Handle this participant's stream
+          this._handlePeerConnectionForGroup(incomingCall, callerPublicKey);
         } else {
-          // New participant we didn't know about
-          this.groupParticipants.set(callerPublicKey, {
-            connection: incomingCall,
-            connected: false,
-            connecting: true
-          });
-
-          this.log(`Added new participant ${callerPublicKey} from incoming call`);
+          // For 1:1 calls
+          this.peerConnection = incomingCall;
+          this._handlePeerConnection();
         }
-
-        // Handle this participant's stream
-        this._handlePeerConnectionForGroup(incomingCall, callerPublicKey);
-      } else {
-        // For 1:1 calls
-        this.peerConnection = incomingCall;
-        this._handlePeerConnection();
-      }
+      });
     });
-
-    return this.peer;
   }
+
   /**
   * Reject an incoming call - works for both 1:1 and group calls
   */
@@ -1715,7 +1802,7 @@ class VoiceService {
   }
 
   /**
-  * Connect to a specific group participant - Fixed peer ID format
+  * Connect to a specific group participant - FIXED VERSION
   * @param {string} participantKey - The participant's public key
   * @private
   */
@@ -1736,8 +1823,8 @@ class VoiceService {
     }
 
     try {
-      // Create a unique ID for this connection - FIXED FORMAT
-      // Format should be: participantPublicKey-callId
+      // CRITICAL FIX: Ensure the remote peer ID format is exactly the same as how they registered
+      // Format: participantPublicKey-callId (no additional prefix)
       const remotePeerId = `${participantKey}-${this.callId}`;
 
       this.log(`Connecting to group participant: ${participantKey}`);
@@ -1777,6 +1864,20 @@ class VoiceService {
       this.log(`Calling peer with ID: ${remotePeerId}`);
       this.log(`Local peer ID: ${this.peer.id}`);
 
+      // IMPROVED ERROR HANDLING: Wrap the call in try/catch and ensure peer is open
+      if (this.peer.disconnected) {
+        this.log('Peer is disconnected, reconnecting before call');
+        this.peer.reconnect();
+
+        // Set a short timeout to wait for reconnection
+        setTimeout(() => {
+          if (this.callState === 'connected') {
+            this._connectToGroupParticipant(participantKey);
+          }
+        }, 1000);
+        return;
+      }
+
       // Make the call to this participant
       const connection = this.peer.call(remotePeerId, this.localStream, callOptions);
 
@@ -1800,16 +1901,21 @@ class VoiceService {
         // Handle this connection
         this._handlePeerConnectionForGroup(connection, participantKey);
 
+        // Progressive backoff for retries - increases as connection attempts fail
+        const retryDelay = Math.min(2000 + (this.currentConnectionAttempt * 500), 10000);
+
         // Set a timeout to retry if not connected after a while
         setTimeout(() => {
           if (this.groupParticipants.has(participantKey)) {
             const participantData = this.groupParticipants.get(participantKey);
             if (!participantData.connected && this.callState === 'connected') {
               this.log(`Connection to ${participantKey} not established after timeout, retrying`);
+              // Increment retry counter
+              this.currentConnectionAttempt++;
               this._connectToGroupParticipant(participantKey);
             }
           }
-        }, 10000); // 10 second timeout for connection
+        }, retryDelay);
       } else {
         this.log(`Failed to create connection to participant ${participantKey}`);
 
@@ -1825,14 +1931,18 @@ class VoiceService {
     } catch (error) {
       console.error(`Error connecting to group participant ${participantKey}:`, error);
 
-      // Set a retry after error
+      // Set a retry after error with exponential backoff
+      const backoffDelay = Math.min(5000 * Math.pow(1.5, this.currentConnectionAttempt), 30000);
+
       setTimeout(() => {
         if (this.isGroupCall && this.callState === 'connected' &&
           this.groupParticipants.has(participantKey)) {
           this.log(`Retrying connection to participant ${participantKey} after error`);
+          // Increment retry counter for exponential backoff
+          this.currentConnectionAttempt++;
           this._connectToGroupParticipant(participantKey);
         }
-      }, 5000);
+      }, backoffDelay);
     }
   }
 
