@@ -644,30 +644,30 @@ class VoiceService {
         console.warn('Already in a call');
         return false;
       }
-      
+
       // Normalize groupId - remove 'group-' prefix if present
       let normalizedGroupId = groupId;
       if (normalizedGroupId.startsWith('group-')) {
         normalizedGroupId = normalizedGroupId.substring(6);
       }
-      
+
       this.log('Initiating group call:', normalizedGroupId, members);
       this.isOutgoingCall = true;
       this.isGroupCall = true;
       this.groupId = normalizedGroupId;
       this.groupName = groupName || 'Group Call';
       this.groupMembers = Array.isArray(members) ? [...members] : [];
-      
+
       // Request microphone and establish local stream
       await this._setupLocalStream();
-      
+
       // Generate a SIMPLER call ID - just use groupId with a timestamp
       this.callId = `${normalizedGroupId}-${Date.now()}`;
       this.log('Generated group call ID:', this.callId);
-      
+
       // Initialize PeerJS first, wait for it to be ready
       await this._initializePeerJS();
-      
+
       // Send group call request to signaling server
       this.socket.emit('group_call_request', {
         callId: this.callId,
@@ -676,7 +676,7 @@ class VoiceService {
         groupName: this.groupName,
         members: this.groupMembers
       });
-      
+
       // Update call state to ringing
       this.callState = 'ringing';
       this._notifyListeners('call_state_changed', {
@@ -687,7 +687,7 @@ class VoiceService {
         outgoing: true,
         isGroup: true
       });
-      
+
       // Set a timeout to transition from ringing to connected for initiator
       setTimeout(() => {
         if (this.callState === 'ringing') {
@@ -702,7 +702,7 @@ class VoiceService {
           });
         }
       }, 5000);
-      
+
       return true;
     } catch (error) {
       console.error('Error initiating group call:', error);
@@ -989,9 +989,9 @@ class VoiceService {
   }
 
   /**
-   * Enhanced WebRTC connection with retry logic and mobile optimization
-   * Improved to handle mobile data connections better with audio focus
-   */
+ * Enhanced WebRTC connection with retry logic and mobile optimization
+ * Improved to handle mobile data connections better with audio focus
+ */
   async _enhancedWebRTCConnection() {
     if (!this.localStream) {
       this.log('Local stream not available, cannot initiate WebRTC');
@@ -1017,8 +1017,8 @@ class VoiceService {
       }
     }
 
-    // Create unique peer ID based on call ID and our key
-    const myPeerId = `${this.userPublicKey}-${this.callId}`;
+    // FIXED: Standardize peer ID format - Remove callId from the ID to keep it simple
+    const myPeerId = this.userPublicKey;
     this.log('My peer ID:', myPeerId);
 
     // Adjust PeerJS config based on network type
@@ -1079,7 +1079,8 @@ class VoiceService {
       }
 
       try {
-        const remotePeerId = `${this.remoteUserKey}-${this.callId}`;
+        // FIXED: Use remote public key as the peer ID - not combining with callId
+        const remotePeerId = this.remoteUserKey;
         this.log('Calling remote peer:', remotePeerId);
 
         // Enhanced call options for better audio
@@ -1278,6 +1279,7 @@ class VoiceService {
       this._handlePeerConnection();
     });
   }
+
 
   /**
  * Handle PeerJS connection events with advanced audio handling
@@ -1566,8 +1568,8 @@ class VoiceService {
   }
 
   /**
- * Initialize PeerJS for WebRTC connections - FIXED VERSION
- */
+  * Initialize PeerJS for WebRTC connections - FIXED VERSION
+  */
   async _initializePeerJS() {
     // Clear all previous timeouts
     this._clearAllTimeouts();
@@ -1585,9 +1587,8 @@ class VoiceService {
       this.peer = null;
     }
 
-    // SIMPLIFIED PEER ID FORMAT - Just use userPublicKey and callId
-    // This ensures consistent formatting between caller and answerer
-    const myPeerId = `${this.userPublicKey}-${this.callId}`;
+    // FIXED: Simplified peer ID format - just use the user's public key
+    const myPeerId = this.userPublicKey;
 
     this.log('Initializing PeerJS with ID:', myPeerId);
 
@@ -1639,8 +1640,7 @@ class VoiceService {
         this.log('Received incoming PeerJS call from:', incomingCall.peer);
 
         // Extract the caller's public key from the peer ID
-        const callerPeerId = incomingCall.peer;
-        const callerPublicKey = callerPeerId.split('-')[0];
+        const callerPublicKey = incomingCall.peer;
 
         this.log(`Call from peer ${callerPeerId}, extracted key: ${callerPublicKey}`);
 
@@ -1711,14 +1711,14 @@ class VoiceService {
   }
 
   /**
-  * Connect to a specific group participant - FIXED VERSION
-  * @param {string} participantKey - The participant's public key
-  * @private
-  */
+   * Connect to a specific group participant - FIXED VERSION
+   * @param {string} participantKey - The participant's public key
+   * @private
+   */
   _connectToGroupParticipant(participantKey) {
     if (!this.peer || !this.localStream) {
       this.log(`Cannot connect to participant ${participantKey} - peer or stream not ready`);
-      
+
       // Set a retry after peer and stream are ready
       if (this.isGroupCall && this.callState === 'connected') {
         setTimeout(() => {
@@ -1729,26 +1729,26 @@ class VoiceService {
       }
       return;
     }
-    
+
     try {
-      // SIMPLIFIED PEER ID FORMAT - Just use participantKey and callId
-      const remotePeerId = `${participantKey}-${this.callId}`;
-      
+      // FIXED: Simplified peer ID - just use the participant's key
+      const remotePeerId = participantKey;
+
       this.log(`Connecting to group participant: ${participantKey}`);
       this.log(`Remote peer ID: ${remotePeerId}`);
-      
+
       // Check if we already have a connection to this participant
       if (this.groupParticipants.has(participantKey)) {
         const participantData = this.groupParticipants.get(participantKey);
         if (participantData.connection) {
           this.log(`Already have a connection to ${participantKey}, checking if active`);
-          
+
           // If the connection is active and we have a stream, don't create a new one
           if (participantData.connected && participantData.stream) {
             this.log(`Connection to ${participantKey} is already active`);
             return;
           }
-          
+
           // Close the existing connection to create a new one
           try {
             participantData.connection.close();
@@ -1757,14 +1757,14 @@ class VoiceService {
           }
         }
       }
-      
+
       // Make the call to this participant
       const connection = this.peer.call(remotePeerId, this.localStream);
-      
+
       if (connection) {
         // Store the connection
         this.log(`Created connection to participant ${participantKey}`);
-        
+
         if (this.groupParticipants.has(participantKey)) {
           const participantData = this.groupParticipants.get(participantKey);
           participantData.connection = connection;
@@ -1777,10 +1777,10 @@ class VoiceService {
             connecting: true
           });
         }
-        
+
         // Handle this connection
         this._handlePeerConnectionForGroup(connection, participantKey);
-        
+
         // Set a timeout to retry if not connected after a while
         setTimeout(() => {
           if (this.groupParticipants.has(participantKey)) {
@@ -1794,11 +1794,11 @@ class VoiceService {
         }, 5000);
       } else {
         this.log(`Failed to create connection to participant ${participantKey}`);
-        
+
         // Set a retry after a delay
         setTimeout(() => {
           if (this.isGroupCall && this.callState === 'connected' &&
-              this.groupParticipants.has(participantKey)) {
+            this.groupParticipants.has(participantKey)) {
             this.log(`Retrying connection to participant ${participantKey} after failure`);
             this._connectToGroupParticipant(participantKey);
           }
@@ -1806,18 +1806,17 @@ class VoiceService {
       }
     } catch (error) {
       console.error(`Error connecting to group participant ${participantKey}:`, error);
-      
+
       // Set a retry after error
       setTimeout(() => {
         if (this.isGroupCall && this.callState === 'connected' &&
-            this.groupParticipants.has(participantKey)) {
+          this.groupParticipants.has(participantKey)) {
           this.log(`Retrying connection to participant ${participantKey} after error`);
           this._connectToGroupParticipant(participantKey);
         }
       }, 5000);
     }
   }
-
 
   /**
   * Handle peer connection for a group participant - Improved implementation

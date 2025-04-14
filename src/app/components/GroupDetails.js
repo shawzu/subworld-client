@@ -20,12 +20,12 @@ export default function GroupDetails({ group, onClose, currentUserKey }) {
     const checkStatus = () => {
       // Check if current user is an admin
       setIsAdmin(group.admins?.includes(currentUserKey) || false)
-      
+
       // Set members list
       if (group.members) {
         setMembers(group.members)
       }
-      
+
       setLoading(false)
     }
 
@@ -37,7 +37,7 @@ export default function GroupDetails({ group, onClose, currentUserKey }) {
     if (!contactStore) return publicKeyStr === currentUserKey ? 'You' : publicKeyStr
 
     if (publicKeyStr === currentUserKey) return 'You'
-    
+
     const contact = contactStore.getContact(publicKeyStr)
     return contact?.alias || publicKeyStr
   }
@@ -45,28 +45,28 @@ export default function GroupDetails({ group, onClose, currentUserKey }) {
   async function handleAddMember(e) {
     e.preventDefault();
     if (!newMemberKey.trim() || !conversationManager) return;
-  
+
     try {
       setAddingMember(true);
-  
+
       // Call the function to add a member to the group
       if (typeof conversationManager.addGroupMember === 'function') {
         await conversationManager.addGroupMember(group.id, newMemberKey.trim());
       } else {
         await conversationManager.addMemberToGroup(group.id, newMemberKey.trim());
       }
-      
+
       // Immediately refresh the group data
       const updatedGroup = await conversationManager.refreshGroup(group.id);
-      
+
       // Update the members list in the current component state
       if (updatedGroup && updatedGroup.members) {
         setMembers(updatedGroup.members);
       }
-      
+
       // Clear input
       setNewMemberKey('');
-  
+
     } catch (error) {
       console.error('Failed to add member:', error);
       alert('Failed to add member. Please check the key and try again.');
@@ -78,7 +78,7 @@ export default function GroupDetails({ group, onClose, currentUserKey }) {
   // Leave the group
   const handleLeaveGroup = async () => {
     if (!conversationManager) return
-    
+
     try {
       setLoading(true)
       await conversationManager.leaveGroup(group.id)
@@ -90,29 +90,66 @@ export default function GroupDetails({ group, onClose, currentUserKey }) {
     }
   }
 
+  async function handleRemoveMember(memberId) {
+    if (memberId === currentUserKey) {
+      alert("You cannot remove yourself from the group. Use 'Leave Group' instead.");
+      return;
+    }
+    
+    if (confirm(`Are you sure you want to remove this member from the group?`)) {
+      try {
+        setLoading(true);
+        
+        // Call the conversation manager method
+        await conversationManager.removeGroupMember(group.id, memberId);
+        
+        // Optimistically update the UI without waiting for a refresh
+        setMembers(members.filter(id => id !== memberId));
+        
+        // Show success message
+        alert('Member removed successfully');
+      } catch (error) {
+        console.error('Failed to remove member:', error);
+        alert(`Failed to remove member: ${error.message || 'Unknown error'}`);
+        
+        // Try to refresh the group anyway
+        try {
+          const updatedGroup = await conversationManager.refreshGroup(group.id);
+          if (updatedGroup && updatedGroup.members) {
+            setMembers(updatedGroup.members);
+          }
+        } catch (refreshError) {
+          console.error('Also failed to refresh group:', refreshError);
+        }
+      } finally {
+        setLoading(false);
+      }
+    }
+  }
+
   // Start a group call
   const handleStartGroupCall = async () => {
     if (initiatingCall) return;
-    
+
     setInitiatingCall(true);
-    
+
     try {
       if (typeof window === 'undefined' || !window.voiceService) {
         throw new Error('Voice service not available');
       }
-      
+
       // Ensure service is initialized
       if (!window.voiceService.initialized) {
         await window.voiceService.initialize();
       }
-      
+
       // Start the group call
       await window.voiceService.initiateGroupCall(
         group.id,
         group.name || 'Group Call',
         group.members || []
       );
-      
+
       // Close the details panel
       onClose(false);
     } catch (error) {
@@ -128,14 +165,14 @@ export default function GroupDetails({ group, onClose, currentUserKey }) {
       {/* Header */}
       <div className="p-4 bg-gray-800 border-b border-gray-700 flex items-center justify-between">
         <h2 className="text-xl font-semibold">Group Details</h2>
-        <button 
+        <button
           onClick={() => onClose(false)}
           className="p-1 rounded-full hover:bg-gray-700"
         >
           <X size={22} />
         </button>
       </div>
-      
+
       {/* Content */}
       <div className="p-5 overflow-y-auto flex-1">
         <div className="space-y-6">
@@ -149,7 +186,7 @@ export default function GroupDetails({ group, onClose, currentUserKey }) {
               <p className="text-gray-400 mt-2">{group.description}</p>
             )}
             <p className="text-sm text-gray-500 mt-3">Created {new Date(group.created).toLocaleDateString()}</p>
-            
+
             {/* Group Call Button */}
             <button
               onClick={handleStartGroupCall}
@@ -169,14 +206,14 @@ export default function GroupDetails({ group, onClose, currentUserKey }) {
               )}
             </button>
           </div>
-          
+
           {/* Members Section */}
           <div>
             <h4 className="text-md font-medium mb-3 flex items-center">
               <Users size={18} className="mr-2" />
               Members ({members.length})
             </h4>
-            
+
             <div className="space-y-2 max-h-60 overflow-y-auto">
               {members.map(memberId => (
                 <div key={memberId} className="p-3 bg-gray-700 rounded-lg flex items-center justify-between">
@@ -194,10 +231,14 @@ export default function GroupDetails({ group, onClose, currentUserKey }) {
                       <div className="text-xs text-gray-400 truncate max-w-[180px]">{memberId}</div>
                     </div>
                   </div>
-                  
+
                   {/* Admin controls */}
                   {isAdmin && memberId !== currentUserKey && (
-                    <button className="p-1 rounded hover:bg-red-600/20 text-red-400">
+                    <button
+                      onClick={() => handleRemoveMember(memberId)}
+                      className="p-1 rounded hover:bg-red-600/20 text-red-400"
+                      title="Remove member"
+                    >
                       <UserMinus size={16} />
                     </button>
                   )}
@@ -205,7 +246,7 @@ export default function GroupDetails({ group, onClose, currentUserKey }) {
               ))}
             </div>
           </div>
-          
+
           {/* Add Member Form (for admins) */}
           {isAdmin && (
             <div className="mt-6 pt-4 border-t border-gray-700">
@@ -235,7 +276,7 @@ export default function GroupDetails({ group, onClose, currentUserKey }) {
           )}
         </div>
       </div>
-      
+
       {/* Footer Actions */}
       <div className="p-4 bg-gray-800 border-t border-gray-700">
         {confirmLeave ? (

@@ -910,6 +910,127 @@ class ConversationManager {
   }
 
   /**
+ * Remove a member from a group (admin only)
+ * @param {string} groupId - The group ID
+ * @param {string} memberPublicKey - The member's public key to remove
+ * @returns {Promise<boolean>} - Success status
+ */
+  async removeGroupMember(groupId, memberPublicKey) {
+    // Direct approach - access the network service through window global
+    const networkService = typeof window !== 'undefined' ? window.subworldNetwork : null;
+    
+    // If the global isn't available, try the imported module
+    if (!networkService && typeof subworldNetwork !== 'undefined') {
+      console.log('Using imported network service');
+    } else if (!networkService) {
+      throw new Error('Network service is not available');
+    }
+    
+    try {
+      // Call the API directly with the proxy
+      const response = await fetch(`https://proxy.inhouses.xyz/api/bootstrap1/groups/remove_member`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          group_id: groupId,
+          user_id: memberPublicKey,
+          admin_id: this.currentUserKey
+        })
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Failed to remove member: ${response.status}`);
+      }
+      
+      // Parse response
+      const data = await response.json();
+      
+      // Immediately refresh the group
+      await this.refreshGroup(groupId);
+      
+      // Dispatch events for UI update
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('groupUpdated', {
+          detail: {
+            groupId,
+            action: 'memberRemoved',
+            memberPublicKey
+          }
+        }));
+        
+        window.dispatchEvent(new CustomEvent('conversationsUpdated'));
+      }
+      
+      return { success: true };
+    } catch (error) {
+      console.error('Error removing group member:', error);
+      throw error;
+    }
+  }
+
+  /**
+ * Remove a member from a group (admin only)
+ * @param {string} groupId - Group ID
+ * @param {string} memberPublicKey - Public key of member to remove
+ * @returns {Promise<{success: boolean}>} Success response
+ */
+  async removeGroupMember(groupId, memberPublicKey) {
+    try {
+      if (!this.currentNode || !this.keyPair) {
+        throw new Error('No node selected or user keys not available');
+      }
+
+      // Prepare the request data
+      const removeData = {
+        group_id: groupId,
+        user_id: memberPublicKey,
+        admin_id: this.keyPair.publicKeyDisplay // Current user must be admin
+      };
+
+      // Use proxy for the API request
+      const nodeId = this.currentNode.id || 'bootstrap1';
+      console.log('Removing member from group via proxy:',
+        `${this.proxyBaseUrl}${nodeId}/groups/remove_member`);
+
+      // Make the API request
+      const response = await fetch(`${this.proxyBaseUrl}${nodeId}/groups/remove_member`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(removeData)
+      });
+
+      // Handle errors
+      if (!response.ok) {
+        // Try to get error details
+        let errorText = '';
+        try {
+          const errorData = await response.text();
+          errorText = errorData;
+        } catch (e) {
+          errorText = `Status code: ${response.status}`;
+        }
+
+        throw new Error(`Failed to remove group member: ${errorText}`);
+      }
+
+      // Parse success response
+      const data = await response.json();
+
+      // Also refresh the group info immediately
+      await this.getGroup(groupId);
+
+      return { success: true };
+    } catch (error) {
+      console.error('Error removing group member:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Send a message to a group
    */
   async sendGroupMessage(groupId, content) {
