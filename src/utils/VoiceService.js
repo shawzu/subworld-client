@@ -440,75 +440,75 @@ class VoiceService {
  * Fetch TURN server credentials from our proxy server
  * @returns {Promise<boolean>} Success status
  */
-async _fetchTurnCredentials() {
-  try {
-    this.log('Fetching TURN credentials from proxy server');
+  async _fetchTurnCredentials() {
+    try {
+      this.log('Fetching TURN credentials from proxy server');
 
-    const response = await fetch(`${this.serverUrl}/turn-credentials`);
+      const response = await fetch(`${this.serverUrl}/turn-credentials`);
 
-    if (!response.ok) {
-      throw new Error(`Failed to fetch TURN credentials: ${response.status}`);
-    }
+      if (!response.ok) {
+        throw new Error(`Failed to fetch TURN credentials: ${response.status}`);
+      }
 
-    const data = await response.json();
-    this.log('Received TURN credentials');
+      const data = await response.json();
+      this.log('Received TURN credentials');
 
-    // Update ice servers configuration with the received credentials
-    if (data && data.iceServers && Array.isArray(data.iceServers)) {
-      // Replace all existing ice servers with our custom ones
-      this.peerConfig.config.iceServers = data.iceServers;
+      // Update ice servers configuration with the received credentials
+      if (data && data.iceServers && Array.isArray(data.iceServers)) {
+        // Replace all existing ice servers with our custom ones
+        this.peerConfig.config.iceServers = data.iceServers;
 
-      this.log('Updated ICE servers with custom TURN servers');
+        this.log('Updated ICE servers with custom TURN servers');
+        return true;
+      } else {
+        this.log('Invalid TURN credentials format received');
+        return false;
+      }
+    } catch (error) {
+      console.warn('Error fetching TURN credentials:', error);
+
+      // Use a fallback set of TURN servers
+      const fallbackTurnServers = [
+        {
+          urls: [
+            'turn:relay1.expressturn.com:3478'
+          ],
+          username: 'efQX0LFAL6X57HSHIV',
+          credential: 'EUOrSrU4chhCfoRT'
+        }
+      ];
+
+      // Update with fallback servers
+      this.peerConfig.config.iceServers = [
+        // Keep STUN servers
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+        // Add fallback TURN servers
+        ...fallbackTurnServers
+      ];
+
+      this.log('Using fallback TURN servers');
       return true;
-    } else {
-      this.log('Invalid TURN credentials format received');
-      return false;
     }
-  } catch (error) {
-    console.warn('Error fetching TURN credentials:', error);
-    
-    // Use a fallback set of TURN servers
-    const fallbackTurnServers = [
-      {
-        urls: [
-          'turn:relay1.expressturn.com:3478'
-        ],
-        username: 'efQX0LFAL6X57HSHIV',
-        credential: 'EUOrSrU4chhCfoRT'
-      }
-    ];
-    
-    // Update with fallback servers
-    this.peerConfig.config.iceServers = [
-      // Keep STUN servers
-      { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' },
-      // Add fallback TURN servers
-      ...fallbackTurnServers
-    ];
-    
-    this.log('Using fallback TURN servers');
-    return true;
   }
-}
 
-/**
- * Clear all connection timeouts
- * @private
- */
-_clearAllTimeouts() {
-  // Clear all pending timeouts
-  if (this.connectionTimeouts && Array.isArray(this.connectionTimeouts)) {
-    this.connectionTimeouts.forEach(timeoutId => {
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-      }
-    });
-    this.connectionTimeouts = [];
+  /**
+   * Clear all connection timeouts
+   * @private
+   */
+  _clearAllTimeouts() {
+    // Clear all pending timeouts
+    if (this.connectionTimeouts && Array.isArray(this.connectionTimeouts)) {
+      this.connectionTimeouts.forEach(timeoutId => {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
+      });
+      this.connectionTimeouts = [];
+    }
+
+    this.log('Cleared all connection timeouts');
   }
-  
-  this.log('Cleared all connection timeouts');
-}
 
   /**
    * Initiate a call to a contact
@@ -689,9 +689,7 @@ _clearAllTimeouts() {
     }
   }
 
-  /**
-   * Detect and monitor network type
-   */
+
   _detectNetworkType() {
     try {
       const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
@@ -707,16 +705,52 @@ _clearAllTimeouts() {
       this.isMobileNetwork = isCellular || isUserAgentMobile || isEffectiveTypeSlow;
       this.networkType = this.isMobileNetwork ? 'mobile' : 'wifi';
 
-      this.log(`Network Detection:
-        Connection Type: ${connection?.type || 'unknown'}
-        Effective Type: ${connection?.effectiveType || 'unknown'}
-        Save Data: ${connection?.saveData || 'unknown'}
-        Final Network Type: ${this.networkType}
-      `);
+      this.log(`Comprehensive Network Detection:
+       Cellular Connection: ${isCellular}
+       User Agent Mobile: ${isUserAgentMobile}
+       Slow Network Type: ${isEffectiveTypeSlow}
+       Final Network Type: ${this.networkType}
+     `);
     } catch (error) {
-      console.error('Network detection failed:', error);
+      console.error('Advanced network detection failed:', error);
     }
   }
+
+  /**
+ * Check if currently in a call
+ */
+  isInCall() {
+    return this.callState === 'connecting' || this.callState === 'connected' || this.callState === 'ringing';
+  }
+
+  /**
+   * Get current mute state
+   */
+  getMuteState() {
+    return this.isMuted;
+  }
+
+  /**
+ * Toggle microphone mute state
+ */
+  toggleMute() {
+    if (!this.localStream) {
+      return false;
+    }
+
+    this.isMuted = !this.isMuted;
+    this.log('Toggle mute:', this.isMuted ? 'Muted' : 'Unmuted');
+
+    // Update all audio tracks
+    this.localStream.getAudioTracks().forEach(track => {
+      track.enabled = !this.isMuted;
+      this.log(`Audio track ${track.label} ${track.enabled ? 'enabled' : 'disabled'}`);
+    });
+
+    this._notifyListeners('mute_changed', { isMuted: this.isMuted });
+    return this.isMuted;
+  }
+
 
   /**
    * Process audio stream to optimize for network conditions
@@ -835,6 +869,588 @@ _clearAllTimeouts() {
       throw error;
     }
   }
+
+  _initiateWebRTCConnection() {
+    return this._enhancedWebRTCConnection();
+  }
+
+  /**
+   * Enhanced WebRTC connection with retry logic and mobile optimization
+   * Improved to handle mobile data connections better with audio focus
+   */
+  async _enhancedWebRTCConnection() {
+    if (!this.localStream) {
+      this.log('Local stream not available, cannot initiate WebRTC');
+      this.endCall();
+      return;
+    }
+
+    this.log('Initiating enhanced WebRTC connection with:', this.remoteUserKey);
+    this.log(`Network type: ${this.networkType}, Mobile: ${this.isMobileNetwork}`);
+
+    // Clear all previous timeouts
+    this._clearAllTimeouts();
+
+    // Refresh TURN credentials before establishing connection
+    await this._fetchTurnCredentials();
+
+    // Always create a fresh Peer instance
+    if (this.peer) {
+      try {
+        this.peer.destroy();
+      } catch (e) {
+        console.warn('Error destroying existing peer:', e);
+      }
+    }
+
+    // Create unique peer ID based on call ID and our key
+    const myPeerId = `${this.userPublicKey}-${this.callId}`;
+    this.log('My peer ID:', myPeerId);
+
+    // Adjust PeerJS config based on network type
+    const peerConfig = JSON.parse(JSON.stringify(this.peerConfig)); // Deep clone
+
+    // For mobile networks, prioritize TURN servers by using 'relay' policy
+    if (this.isMobileNetwork) {
+      this.log('Using mobile-optimized config with relay servers prioritized');
+      peerConfig.config.iceTransportPolicy = 'relay';
+    }
+
+    // Initialize PeerJS with configuration
+    this.peer = new Peer(myPeerId, peerConfig);
+
+    // Track current connection attempt
+    this.currentConnectionAttempt = 0;
+
+    // Function to create a timeout with automatic cleanup
+    const createTimeout = (callback, timeout) => {
+      // Use longer timeout for mobile connections
+      const adjustedTimeout = this.isMobileNetwork ? timeout * 2 : timeout;
+
+      const timeoutId = setTimeout(() => {
+        // Remove from tracked timeouts
+        this.connectionTimeouts = this.connectionTimeouts.filter(id => id !== timeoutId);
+        // Execute callback
+        callback();
+      }, adjustedTimeout);
+
+      // Track timeout for cleanup
+      this.connectionTimeouts.push(timeoutId);
+
+      return timeoutId;
+    };
+
+    // Connection attempt function with improved retry logic
+    const attemptConnection = () => {
+      this.currentConnectionAttempt++;
+
+      // Update the UI with connection attempt
+      this._notifyListeners('connection_attempt', {
+        attempt: this.currentConnectionAttempt
+      });
+
+      this.log(`Connection attempt ${this.currentConnectionAttempt} of ${this.maxConnectionAttempts}`);
+
+      if (this.currentConnectionAttempt > this.maxConnectionAttempts) {
+        this.log('Maximum connection attempts reached, giving up');
+        this.callState = 'ended';
+        this._notifyListeners('call_state_changed', {
+          state: 'ended',
+          contact: this.remoteUserKey,
+          reason: 'connection_failed'
+        });
+
+        this._cleanupCall();
+        return;
+      }
+
+      try {
+        const remotePeerId = `${this.remoteUserKey}-${this.callId}`;
+        this.log('Calling remote peer:', remotePeerId);
+
+        // Enhanced call options for better audio
+        const callOptions = {
+          metadata: {
+            callId: this.callId,
+            attempt: this.currentConnectionAttempt,
+            networkType: this.networkType
+          },
+          // Modify SDP offer to optimize for audio quality
+          sdpTransform: (sdp) => {
+            // Add additional SDP modifications for better mobile compatibility
+            let modifiedSdp = sdp;
+
+            // Force opus codec with specific parameters for better audio
+            modifiedSdp = modifiedSdp.replace('useinbandfec=1', 'useinbandfec=1; stereo=0; sprop-stereo=0; maxaveragebitrate=24000');
+
+            // Add b=AS line to limit bandwidth
+            const bandwidthValue = this.isMobileNetwork ? '30' : '50'; // kbps
+            const lines = modifiedSdp.split('\r\n');
+            const audioIndex = lines.findIndex(line => line.startsWith('m=audio'));
+
+            if (audioIndex !== -1) {
+              // Add bandwidth restriction after the m=audio line
+              lines.splice(audioIndex + 1, 0, `b=AS:${bandwidthValue}`);
+              modifiedSdp = lines.join('\r\n');
+            }
+
+            // Set audio to high priority
+            modifiedSdp = modifiedSdp.replace(/a=mid:0/g, 'a=mid:0\r\na=content:main\r\na=priority:high');
+
+            return modifiedSdp;
+          }
+        };
+
+        // Verify audio tracks are enabled before calling
+        this.localStream.getAudioTracks().forEach(track => {
+          if (!track.enabled) {
+            track.enabled = true;
+            this.log('Re-enabled audio track before call');
+          }
+        });
+
+        // Make the call with audio stream and options
+        this.peerConnection = this.peer.call(remotePeerId, this.localStream, callOptions);
+
+        if (!this.peerConnection) {
+          this.log('Failed to create peer connection');
+
+          // Retry after delay
+          createTimeout(() => {
+            attemptConnection();
+          }, 2000 + (this.currentConnectionAttempt * 500)); // Increase delay with each attempt
+
+          return;
+        }
+
+        // Handle the connection
+        this._handlePeerConnection();
+
+        // Set timeout for this attempt - longer for mobile
+        const timeoutDuration = this.isMobileNetwork ?
+          8000 + (this.currentConnectionAttempt * 1000) : // longer for mobile
+          5000 + (this.currentConnectionAttempt * 500);   // shorter for wifi
+
+        createTimeout(() => {
+          // If we're still connecting, try again
+          if (this.callState === 'connecting') {
+            attemptConnection();
+          }
+        }, timeoutDuration);
+      } catch (err) {
+        console.error('Error calling remote peer:', err);
+
+        // Retry after delay - progressive backoff
+        createTimeout(() => {
+          attemptConnection();
+        }, 2000 + (this.currentConnectionAttempt * 1000));
+      }
+    };
+
+    this.peer.on('open', (id) => {
+      this.log('PeerJS connection opened with ID:', id);
+
+      // Handle based on call direction
+      if (this.isOutgoingCall) {
+        // If this is an outgoing call, initiate connection with retry logic
+        attemptConnection();
+      }
+    });
+
+    this.peer.on('error', (err) => {
+      this.log('PeerJS error:', err.type);
+
+      if (err.type === 'peer-unavailable' && this.callState === 'connecting') {
+        // For peer unavailable, if we're on mobile, wait longer between retries
+        const retryDelay = this.isMobileNetwork ?
+          3000 + (this.currentConnectionAttempt * 1000) :
+          2000 + (this.currentConnectionAttempt * 500);
+
+        createTimeout(() => {
+          if (this.callState === 'connecting') {
+            attemptConnection();
+          }
+        }, retryDelay);
+        return;
+      }
+
+      // For network errors, try to reconnect more aggressively
+      if (err.type === 'network' && this.callState === 'connecting') {
+        this.log('Network error, attempting quick reconnect');
+        createTimeout(() => {
+          if (this.callState === 'connecting') {
+            attemptConnection();
+          }
+        }, 1000);
+        return;
+      }
+
+      // For server or socket errors, maybe the server is overloaded
+      if ((err.type === 'server-error' || err.type === 'socket-error') &&
+        this.callState === 'connecting') {
+        createTimeout(() => {
+          if (this.callState === 'connecting') {
+            attemptConnection();
+          }
+        }, 3000);
+        return;
+      }
+
+      // For other errors, end the call if still active and we've exhausted retries
+      if (this.currentConnectionAttempt >= this.maxConnectionAttempts &&
+        this.callState !== 'ended' &&
+        this.callState !== null) {
+        this.callState = 'ended';
+        this._notifyListeners('call_state_changed', {
+          state: 'ended',
+          contact: this.remoteUserKey,
+          reason: 'connection_error'
+        });
+
+        // Clean up
+        this._cleanupCall();
+      }
+    });
+
+    // Listen for incoming calls (important for the answerer)
+    this.peer.on('call', (incomingCall) => {
+      this.log('Received incoming PeerJS call');
+
+      // Clear any existing timeouts
+      this._clearAllTimeouts();
+
+      // Enhanced answer options
+      const answerOptions = {
+        sdpTransform: (sdp) => {
+          // Add additional SDP modifications for better mobile compatibility
+          let modifiedSdp = sdp;
+
+          // Force opus codec with specific parameters for better audio
+          modifiedSdp = modifiedSdp.replace('useinbandfec=1', 'useinbandfec=1; stereo=0; sprop-stereo=0; maxaveragebitrate=24000');
+
+          // Add b=AS line to limit bandwidth
+          const bandwidthValue = this.isMobileNetwork ? '30' : '50'; // kbps
+          const lines = modifiedSdp.split('\r\n');
+          const audioIndex = lines.findIndex(line => line.startsWith('m=audio'));
+
+          if (audioIndex !== -1) {
+            // Add bandwidth restriction after the m=audio line
+            lines.splice(audioIndex + 1, 0, `b=AS:${bandwidthValue}`);
+            modifiedSdp = lines.join('\r\n');
+          }
+
+          // Set audio to high priority
+          modifiedSdp = modifiedSdp.replace(/a=mid:0/g, 'a=mid:0\r\na=content:main\r\na=priority:high');
+
+          return modifiedSdp;
+        }
+      };
+
+      // Verify audio tracks are enabled before answering
+      this.localStream.getAudioTracks().forEach(track => {
+        if (!track.enabled) {
+          track.enabled = true;
+          this.log('Re-enabled audio track before answering call');
+        }
+      });
+
+      // Answer the call with our local stream and options
+      incomingCall.answer(this.localStream, answerOptions);
+
+      // Update our connection reference
+      this.peerConnection = incomingCall;
+
+      // Handle the connection
+      this._handlePeerConnection();
+    });
+  }
+
+  /**
+ * Handle PeerJS connection events with advanced audio handling
+ */
+  _handlePeerConnection() {
+    if (!this.peerConnection) {
+      this.log('No peer connection to handle');
+      return;
+    }
+
+    // Handle remote stream with enhanced audio processing
+    this.peerConnection.on('stream', (stream) => {
+      this.log('Received remote stream with tracks:', stream.getTracks().length);
+
+      // Verify we have audio tracks in the remote stream
+      const remoteTracks = stream.getAudioTracks();
+      if (remoteTracks.length === 0) {
+        this.log('Warning: Remote stream has no audio tracks');
+      } else {
+        this.log('Remote audio track received:', remoteTracks[0].label, 'enabled:', remoteTracks[0].enabled);
+
+        // Make sure the remote tracks are enabled
+        remoteTracks.forEach(track => {
+          if (!track.enabled) {
+            this.log('Remote track was disabled, enabling it');
+            track.enabled = true;
+          }
+        });
+      }
+
+      // Store the remote stream
+      this.remoteStream = stream;
+
+      // Notify listeners of remote stream
+      this._notifyListeners('remote_stream_added', { stream });
+
+      // Update call state to connected
+      this.callState = 'connected';
+      this._notifyListeners('call_state_changed', {
+        state: 'connected',
+        contact: this.remoteUserKey
+      });
+
+      // Clear all connection attempt timeouts
+      this._clearAllTimeouts();
+
+      // Start audio monitoring to ensure continued audio flow
+      this._startAudioMonitoring();
+    });
+
+    // Handle call closing
+    this.peerConnection.on('close', () => {
+      this.log('Peer connection closed');
+
+      if (this.callState !== 'ended') {
+        this.callState = 'ended';
+        this._notifyListeners('call_state_changed', {
+          state: 'ended',
+          contact: this.remoteUserKey,
+          reason: 'connection_closed'
+        });
+
+        // Clean up
+        this._cleanupCall();
+      }
+    });
+
+    // Handle errors
+    this.peerConnection.on('error', (err) => {
+      console.error('Peer connection error:', err);
+
+      if (this.callState !== 'ended') {
+        this.callState = 'ended';
+        this._notifyListeners('call_state_changed', {
+          state: 'ended',
+          contact: this.remoteUserKey,
+          reason: 'connection_error'
+        });
+
+        // Clean up
+        this._cleanupCall();
+      }
+    });
+
+    // Access the underlying RTCPeerConnection for advanced monitoring
+    if (this.peerConnection.peerConnection) {
+      const rtcPeerConn = this.peerConnection.peerConnection;
+
+      // Listen for ICE connection state changes
+      rtcPeerConn.oniceconnectionstatechange = () => {
+        this.log('ICE connection state:', rtcPeerConn.iceConnectionState);
+
+        if (rtcPeerConn.iceConnectionState === 'failed') {
+          this.log('ICE connection failed - attempting to restart ICE');
+
+          // Try to restart ICE if supported
+          if (rtcPeerConn.restartIce) {
+            rtcPeerConn.restartIce();
+            this.log('ICE restart requested');
+          } else {
+            // Fallback: create offer with iceRestart flag
+            rtcPeerConn.createOffer({ iceRestart: true })
+              .then(offer => rtcPeerConn.setLocalDescription(offer))
+              .then(() => {
+                this.log('ICE restart via createOffer successful');
+              })
+              .catch(err => {
+                console.error('ICE restart failed:', err);
+                this.endCall();
+              });
+          }
+        }
+
+        // Handle disconnections more gracefully
+        if (rtcPeerConn.iceConnectionState === 'disconnected' &&
+          this.callState === 'connected') {
+          this.log('ICE connection disconnected - waiting to see if it reconnects');
+
+          // Wait a bit to see if it reconnects
+          setTimeout(() => {
+            if ((rtcPeerConn.iceConnectionState === 'disconnected' ||
+              rtcPeerConn.iceConnectionState === 'failed') &&
+              this.callState === 'connected') {
+              this.log('ICE connection remained disconnected, ending call');
+              this.endCall();
+            }
+          }, 5000);
+        }
+
+        // If we're reconnected, make sure audio is flowing
+        if (rtcPeerConn.iceConnectionState === 'connected' &&
+          this.callState === 'connected') {
+          this._verifyAudioFlowing();
+        }
+      };
+
+      // Monitor connection state changes
+      rtcPeerConn.onconnectionstatechange = () => {
+        this.log('Connection state:', rtcPeerConn.connectionState);
+
+        if (rtcPeerConn.connectionState === 'failed') {
+          this.log('Connection failed permanently, ending call');
+          this.endCall();
+        }
+      };
+
+      // Listen for signaling state changes (helps debug)
+      rtcPeerConn.onsignalingstatechange = () => {
+        this.log('Signaling state:', rtcPeerConn.signalingState);
+      };
+    }
+  }
+
+  /**
+ * Start monitoring audio levels to ensure audio is flowing
+ */
+  _startAudioMonitoring() {
+    // Clear any existing monitoring
+    if (this.audioMonitoringInterval) {
+      clearInterval(this.audioMonitoringInterval);
+    }
+
+    // Start monitoring audio
+    this.audioMonitoringInterval = setInterval(() => {
+      this._verifyAudioFlowing();
+    }, 5000); // Check every 5 seconds
+  }
+
+  /**
+   * Verify audio is flowing and fix if possible
+   */
+  _verifyAudioFlowing() {
+    // Only verify audio when connected
+    if (this.callState !== 'connected') {
+      return;
+    }
+
+    // Check local stream
+    if (this.localStream) {
+      const localTracks = this.localStream.getAudioTracks();
+      if (localTracks.length > 0) {
+        // Make sure local tracks are enabled
+        localTracks.forEach(track => {
+          if (!track.enabled) {
+            this.log('Local track was disabled, re-enabling');
+            track.enabled = true;
+          }
+        });
+      }
+    }
+
+    // Check remote stream
+    if (this.remoteStream) {
+      const remoteTracks = this.remoteStream.getAudioTracks();
+      if (remoteTracks.length > 0) {
+        // Check if remote tracks are enabled
+        const allEnabled = remoteTracks.every(track => track.enabled);
+        if (!allEnabled) {
+          this.log('Remote track was disabled, attempting to recover');
+          remoteTracks.forEach(track => {
+            if (!track.enabled) {
+              track.enabled = true;
+            }
+          });
+        }
+      } else if (this.callState === 'connected') {
+        this.log('No remote audio tracks but call is connected. Possible audio issue.');
+        // This is a fallback - if we're connected but have no remote tracks, there might be an issue
+        // Wait a bit and check again before handling
+        setTimeout(() => {
+          if (this.callState === 'connected' && (!this.remoteStream || this.remoteStream.getAudioTracks().length === 0)) {
+            this.log('Still no remote audio tracks after grace period. Trying to restart connection.');
+            this._tryRestartConnection();
+          }
+        }, 3000);
+      }
+    }
+
+    // If we have access to the RTCPeerConnection, check stats to detect issues
+    if (this.peerConnection && this.peerConnection.peerConnection) {
+      const rtcPeerConn = this.peerConnection.peerConnection;
+
+      rtcPeerConn.getStats(null).then(stats => {
+        let audioFlowing = false;
+        let bytesReceived = 0;
+
+        // Process stats to check if audio data is flowing
+        stats.forEach(stat => {
+          // Look for inbound-rtp statistics for audio
+          if (stat.type === 'inbound-rtp' && stat.kind === 'audio') {
+            bytesReceived = stat.bytesReceived || 0;
+
+            // If we're receiving data, audio is likely flowing
+            if (bytesReceived > 0) {
+              audioFlowing = true;
+            }
+          }
+        });
+
+        // If we've been connected for a while but no audio is flowing, there might be an issue
+        if (!audioFlowing && this.callState === 'connected' &&
+          (Date.now() - this.connectionStartTime) > 10000) {
+          this.log('No audio data flowing detected in stats. Attempting to recover.');
+          this._tryRestartConnection();
+        }
+      }).catch(err => {
+        console.warn('Error getting peer connection stats:', err);
+      });
+    }
+  }
+
+
+  /**
+   * Try to restart the connection if audio issues are detected
+   */
+  _tryRestartConnection() {
+    if (!this.peerConnection || !this.peerConnection.peerConnection || this.callState !== 'connected') {
+      return;
+    }
+
+    try {
+      const rtcPeerConn = this.peerConnection.peerConnection;
+
+      // First try an ICE restart
+      this.log('Attempting to fix audio issues by restarting ICE');
+
+      // Create a new offer with iceRestart flag
+      rtcPeerConn.createOffer({ iceRestart: true })
+        .then(offer => rtcPeerConn.setLocalDescription(offer))
+        .then(() => {
+          this.log('ICE restart for audio recovery initiated');
+        })
+        .catch(err => {
+          console.warn('Failed to restart ICE for audio recovery:', err);
+
+          // If ICE restart fails and we still have no audio, consider ending the call
+          setTimeout(() => {
+            if (this.callState === 'connected') {
+              this._verifyAudioFlowing();
+            }
+          }, 5000);
+        });
+    } catch (error) {
+      console.warn('Error trying to restart connection:', error);
+    }
+  }
+
 
   /**
    * Initialize PeerJS for WebRTC connections
