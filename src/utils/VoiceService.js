@@ -1568,7 +1568,7 @@ class VoiceService {
   }
 
   /**
-  * Initialize PeerJS for WebRTC connections - FIXED VERSION
+  * Initialize PeerJS for WebRTC connections - SIMPLIFIED FIX
   */
   async _initializePeerJS() {
     // Clear all previous timeouts
@@ -1587,7 +1587,7 @@ class VoiceService {
       this.peer = null;
     }
 
-    // FIXED: Simplified peer ID format - just use the user's public key
+    // Use the user's public key
     const myPeerId = this.userPublicKey;
 
     this.log('Initializing PeerJS with ID:', myPeerId);
@@ -1635,41 +1635,44 @@ class VoiceService {
         }
       });
 
-      // Set up incoming call handler
+      // Set up incoming call handler - SIMPLIFIED TO REMOVE REFERENCES TO PROBLEM VARIABLES
       this.peer.on('call', (incomingCall) => {
-        this.log('Received incoming PeerJS call from:', incomingCall.peer);
+        this.log('Received incoming PeerJS call');
 
-        // Extract the caller's public key from the peer ID
-        const callerPublicKey = incomingCall.peer;
+        try {
+          // Answer the call with our local stream
+          incomingCall.answer(this.localStream);
 
-        this.log(`Call from peer ${callerPeerId}, extracted key: ${callerPublicKey}`);
+          // Get caller ID but don't log it in a template string
+          const remotePeerId = incomingCall.peer;
+          this.log('Remote peer ID:', remotePeerId);
 
-        // Answer the call with our local stream
-        incomingCall.answer(this.localStream);
+          // Handle by group or direct call
+          if (this.isGroupCall) {
+            // Track this connection for group calls
+            if (this.groupParticipants.has(remotePeerId)) {
+              const participantData = this.groupParticipants.get(remotePeerId);
+              participantData.connection = incomingCall;
+              participantData.connecting = true;
+              this.groupParticipants.set(remotePeerId, participantData);
+            } else {
+              // New participant we didn't know about
+              this.groupParticipants.set(remotePeerId, {
+                connection: incomingCall,
+                connected: false,
+                connecting: true
+              });
+            }
 
-        // Handle by group or direct call
-        if (this.isGroupCall) {
-          // Track this connection for group calls
-          if (this.groupParticipants.has(callerPublicKey)) {
-            const participantData = this.groupParticipants.get(callerPublicKey);
-            participantData.connection = incomingCall;
-            participantData.connecting = true;
-            this.groupParticipants.set(callerPublicKey, participantData);
+            // Handle this participant's stream
+            this._handlePeerConnectionForGroup(incomingCall, remotePeerId);
           } else {
-            // New participant we didn't know about
-            this.groupParticipants.set(callerPublicKey, {
-              connection: incomingCall,
-              connected: false,
-              connecting: true
-            });
+            // For 1:1 calls
+            this.peerConnection = incomingCall;
+            this._handlePeerConnection();
           }
-
-          // Handle this participant's stream
-          this._handlePeerConnectionForGroup(incomingCall, callerPublicKey);
-        } else {
-          // For 1:1 calls
-          this.peerConnection = incomingCall;
-          this._handlePeerConnection();
+        } catch (err) {
+          console.error('Error handling incoming call:', err);
         }
       });
     });
