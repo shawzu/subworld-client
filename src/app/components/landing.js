@@ -37,18 +37,10 @@ export default function Landing() {
   }
 
   // Fixed navigation handler - properly handles the asynchronous router.push
-  const handleStartMessaging = async () => {
-    console.log('Start messaging button clicked, navigating to /welcome')
-    
-    try {
-      await router.push('/welcome')
-    } catch (err) {
-      console.error('Router navigation failed:', err)
-      // Fallback to direct navigation
-      window.location.href = '/welcome'
-    }
+  const handleStartMessaging = () => {
+    router.push('/welcome')
   }
-
+  
   return (
     <motion.main
       initial={{ opacity: 0 }}
