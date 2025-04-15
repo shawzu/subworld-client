@@ -634,103 +634,121 @@ class VoiceService {
   }
 
   /**
-  * Initiate a group call - FIXED VERSION
-  * @param {string} groupId - The group ID
-  * @param {string} groupName - Name of the group
-  * @param {Array} members - Array of member public keys
-  * @returns {Promise<boolean>} - Success status
-  */
-  async initiateGroupCall(groupId, groupName, members) {
-    try {
-      // Prevent initiating multiple calls
-      if (this.callState) {
-        console.warn('Already in a call');
-        return false;
-      }
+* Initiate a group call - FIXED VERSION with improved group ID handling
+* @param {string} groupId - The group ID
+* @param {string} groupName - Name of the group
+* @param {Array} members - Array of member public keys
+* @returns {Promise<boolean>} - Success status
+*/
+async initiateGroupCall(groupId, groupName, members) {
+  try {
+    // Prevent initiating multiple calls
+    if (this.callState) {
+      console.warn('Already in a call');
+      return false;
+    }
 
-      // Normalize groupId - remove 'group-' prefix if present
-      let normalizedGroupId = groupId;
-      if (normalizedGroupId.startsWith('group-')) {
-        normalizedGroupId = normalizedGroupId.substring(6);
-      }
+    // *** IMPROVED GROUP ID HANDLING ***
+    // Store the original ID for reference
+    const originalGroupId = groupId;
+    
+    // Normalize groupId for internal use
+    // If it starts with 'group-', remove the prefix
+    let normalizedGroupId = groupId;
+    if (normalizedGroupId.startsWith('group-')) {
+      normalizedGroupId = normalizedGroupId.substring(6);
+    }
+    
+    this.log('Initiating group call:', normalizedGroupId, members);
+    this.isOutgoingCall = true;
+    this.isGroupCall = true;
+    this.groupId = normalizedGroupId; // Use normalized ID consistently
+    this.groupName = groupName || 'Group Call';
 
-      this.log('Initiating group call:', normalizedGroupId, members);
-      this.isOutgoingCall = true;
-      this.isGroupCall = true;
-      this.groupId = normalizedGroupId;
-      this.groupName = groupName || 'Group Call';
-
-      // IMPROVEMENT: Get fresh member list from server when available
-      if (typeof window !== 'undefined' && window.conversationManager) {
-        try {
-          // Refresh the group data to get the latest member list
-          const freshGroup = await window.conversationManager.refreshGroup(normalizedGroupId);
-          if (freshGroup && Array.isArray(freshGroup.members)) {
-            this.log('Using fresh member list from server:', freshGroup.members.length, 'members');
-            this.groupMembers = [...freshGroup.members];
-          } else {
-            this.groupMembers = Array.isArray(members) ? [...members] : [];
-          }
-        } catch (refreshErr) {
-          console.warn('Could not refresh group data, using provided members list:', refreshErr);
+    // *** IMPROVED MEMBER LIST HANDLING ***
+    // Get fresh member list but with better error handling
+    if (typeof window !== 'undefined' && window.conversationManager) {
+      try {
+        // First try with the normalized ID
+        let freshGroup = await window.conversationManager.getGroup(normalizedGroupId);
+        
+        // If not found, try with the original ID as fallback
+        if (!freshGroup && originalGroupId !== normalizedGroupId) {
+          freshGroup = await window.conversationManager.getGroup(originalGroupId);
+        }
+        
+        // If group found, use its member list
+        if (freshGroup && Array.isArray(freshGroup.members)) {
+          this.log('Using fresh member list from server:', freshGroup.members.length, 'members');
+          this.groupMembers = [...freshGroup.members];
+        } else {
+          // Fall back to provided members if group not found
+          this.log('Group not found in conversationManager, using provided members list');
           this.groupMembers = Array.isArray(members) ? [...members] : [];
         }
-      } else {
+      } catch (refreshErr) {
+        // Don't fail the call just because we couldn't refresh the group
+        console.warn('Could not refresh group data, using provided members list:', refreshErr);
         this.groupMembers = Array.isArray(members) ? [...members] : [];
       }
-
-      // Request microphone and establish local stream
-      await this._setupLocalStream();
-
-      // Generate a SIMPLER call ID - just use groupId with a timestamp
-      this.callId = `${normalizedGroupId}-${Date.now()}`;
-      this.log('Generated group call ID:', this.callId);
-
-      // Initialize PeerJS first, wait for it to be ready
-      await this._initializePeerJS();
-
-      // Send group call request to signaling server
-      this.socket.emit('group_call_request', {
-        callId: this.callId,
-        caller: this.userPublicKey,
-        groupId: normalizedGroupId,
-        groupName: this.groupName,
-        members: this.groupMembers
-      });
-
-      // Update call state to ringing
-      this.callState = 'ringing';
-      this._notifyListeners('call_state_changed', {
-        state: 'ringing',
-        groupId: normalizedGroupId,
-        groupName: this.groupName,
-        members: this.groupMembers,
-        outgoing: true,
-        isGroup: true
-      });
-
-      // Set a timeout to transition from ringing to connected for initiator
-      setTimeout(() => {
-        if (this.callState === 'ringing') {
-          this.log('Transitioning from ringing to connected for group call initiator');
-          this.callState = 'connected';
-          this._notifyListeners('call_state_changed', {
-            state: 'connected',
-            isGroup: true,
-            groupId: this.groupId,
-            groupName: this.groupName,
-            members: this.groupMembers
-          });
-        }
-      }, 5000);
-
-      return true;
-    } catch (error) {
-      console.error('Error initiating group call:', error);
-      this.endCall();
-      throw error;
+    } else {
+      this.groupMembers = Array.isArray(members) ? [...members] : [];
     }
+
+    // Request microphone and establish local stream
+    await this._setupLocalStream();
+
+    // *** IMPROVED CALL ID GENERATION ***
+    // Generate a simpler call ID that doesn't include the full group ID
+    this.callId = `group-${Date.now()}`;
+    this.log('Generated group call ID:', this.callId);
+
+    // Initialize PeerJS first, wait for it to be ready
+    await this._initializePeerJS();
+
+    // *** IMPROVED SOCKET PAYLOAD ***
+    // Send group call request to signaling server with normalized ID
+    this.socket.emit('group_call_request', {
+      callId: this.callId,
+      caller: this.userPublicKey,
+      groupId: this.groupId, // Use normalized ID
+      groupName: this.groupName,
+      members: this.groupMembers
+    });
+
+    // Update call state to ringing
+    this.callState = 'ringing';
+    this._notifyListeners('call_state_changed', {
+      state: 'ringing',
+      groupId: this.groupId,
+      groupName: this.groupName,
+      members: this.groupMembers,
+      outgoing: true,
+      isGroup: true
+    });
+
+    // Set a timeout to transition from ringing to connected for initiator
+    setTimeout(() => {
+      if (this.callState === 'ringing') {
+        this.log('Transitioning from ringing to connected for group call initiator');
+        this.callState = 'connected';
+        this._notifyListeners('call_state_changed', {
+          state: 'connected',
+          isGroup: true,
+          groupId: this.groupId,
+          groupName: this.groupName,
+          members: this.groupMembers
+        });
+      }
+    }, 5000);
+
+    return true;
+  } catch (error) {
+    console.error('Error initiating group call:', error);
+    this.endCall();
+    throw error;
   }
+}
 
 
   /**

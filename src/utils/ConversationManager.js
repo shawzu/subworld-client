@@ -1442,44 +1442,61 @@ class ConversationManager {
     }
   }
 
-  /**
- * Refresh a group's information
+ /**
+ * Refresh a group's information with improved ID handling
+ * @param {string} groupId - The group ID (with or without 'group-' prefix)
+ * @returns {Promise<Object|null>} - Updated group object or null
  */
-  async refreshGroup(groupId) {
-    if (!groupId || !subworldNetwork) {
-      return null;
-    }
-
-    try {
-      // Get a fresh copy of the group from the network
-      const freshGroup = await subworldNetwork.getGroup(groupId);
-
-      if (!freshGroup) {
-        throw new Error(`Failed to fetch group ${groupId} from network`);
-      }
-
-      // Update the local copy
-      const groupIndex = this.groups.findIndex(g => g.id === groupId);
-      if (groupIndex >= 0) {
-        this.groups[groupIndex] = freshGroup;
-      } else {
-        // Add to groups list if not found
-        this.groups.push(freshGroup);
-      }
-
-      // Force persistence
-      this._persistGroups();
-
-      return freshGroup;
-    } catch (error) {
-      console.error('Error refreshing group:', error);
-
-      // Try to get the local version as fallback
-      const localGroup = this.getGroup(groupId);
-      return localGroup;
-    }
+async refreshGroup(groupId) {
+  if (!groupId || !subworldNetwork) {
+    return null;
   }
 
+  try {
+    // Normalize group ID for network requests
+    let normalizedGroupId = groupId;
+    
+    // If ID starts with 'group-', remove it for the network request
+    if (normalizedGroupId.startsWith('group-')) {
+      normalizedGroupId = normalizedGroupId.substring(6);
+    }
+    
+    console.log(`Refreshing group with normalized ID: ${normalizedGroupId}`);
+    
+    // Get a fresh copy of the group from the network
+    const freshGroup = await subworldNetwork.getGroup(normalizedGroupId);
+
+    if (!freshGroup) {
+      throw new Error(`Failed to fetch group ${normalizedGroupId} from network`);
+    }
+
+    // Update the local copy
+    const groupIndex = this.groups.findIndex(g => 
+      g.id === groupId || 
+      g.id === normalizedGroupId || 
+      (g.id.startsWith('group-') && g.id.substring(6) === normalizedGroupId) ||
+      (`group-${g.id}` === groupId)
+    );
+    
+    if (groupIndex >= 0) {
+      this.groups[groupIndex] = freshGroup;
+    } else {
+      // Add to groups list if not found
+      this.groups.push(freshGroup);
+    }
+
+    // Force persistence
+    this._persistGroups();
+
+    return freshGroup;
+  } catch (error) {
+    console.error('Error refreshing group:', error);
+
+    // Try to get the local version as fallback
+    const localGroup = this.getGroup(groupId);
+    return localGroup;
+  }
+}
 
 
   getGroupMessages(groupId) {
@@ -1516,37 +1533,40 @@ class ConversationManager {
   }
 
   /**
-  * Get a group by ID - with improved ID handling
-  * This method now handles 'group-' prefixed IDs automatically
-  */
-  getGroup(groupId) {
-    if (!groupId) return null;
+* Get a group by ID - with improved ID handling
+* This method now handles 'group-' prefixed IDs automatically
+* @param {string} groupId - The group ID (with or without 'group-' prefix)
+* @returns {Object|null} - Group object or null if not found
+*/
+getGroup(groupId) {
+  if (!groupId) return null;
 
+  // Try to find the group with the exact ID first
+  let foundGroup = this.groups.find(g => g.id === groupId);
 
-    let foundGroup = this.groups.find(g => g.id === groupId);
-
-
-    if (!foundGroup && groupId.startsWith('group-')) {
-      const unprefixedId = groupId.substring(6);
-      foundGroup = this.groups.find(g => g.id === unprefixedId);
-
-      if (foundGroup) {
-        console.log(`Found group with unprefixed ID: ${unprefixedId}`);
-      }
+  // If not found and ID has a prefix, try without the prefix
+  if (!foundGroup && groupId.startsWith('group-')) {
+    const unprefixedId = groupId.substring(6);
+    foundGroup = this.groups.find(g => g.id === unprefixedId);
+    
+    if (foundGroup) {
+      console.log(`Found group with unprefixed ID: ${unprefixedId}`);
     }
-
-
-    if (!foundGroup && !groupId.startsWith('group-')) {
-      const prefixedId = `group-${groupId}`;
-      foundGroup = this.groups.find(g => g.id === prefixedId);
-
-      if (foundGroup) {
-        console.log(`Found group with prefixed ID: ${prefixedId}`);
-      }
-    }
-
-    return foundGroup;
   }
+
+  // If still not found and ID doesn't have a prefix, try with the prefix
+  if (!foundGroup && !groupId.startsWith('group-')) {
+    const prefixedId = `group-${groupId}`;
+    foundGroup = this.groups.find(g => g.id === prefixedId);
+    
+    if (foundGroup) {
+      console.log(`Found group with prefixed ID: ${prefixedId}`);
+    }
+  }
+
+  return foundGroup;
+}
+
 
   /**
    * Persist groups to localStorage
