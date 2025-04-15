@@ -23,7 +23,7 @@ export default function Landing() {
 
     return () => clearTimeout(timer)
   }, [])
-  
+
   const headingVariants = {
     hidden: { opacity: 0, y: 20 },
     visible: (i) => ({
@@ -41,7 +41,7 @@ export default function Landing() {
     router.push('/welcome')
   }
 
-  
+
   return (
     <motion.main
       initial={{ opacity: 0 }}
@@ -110,61 +110,63 @@ export default function Landing() {
       </div>
 
       {/* Install Prompt - Still shown but doesn't block functionality */}
-      <motion.div
-        initial={{ opacity: 0, y: 100 }}
-        animate={{ opacity: showInstallPrompt ? 1 : 0, y: showInstallPrompt ? 0 : 100 }}
-        transition={{ duration: 0.5 }}
-        className="md:hidden fixed bottom-0 left-0 right-0 z-50 m-4"
-      >
-        <div className="rounded-2xl border border-gray-700 bg-gray-900/90 p-6 shadow-lg backdrop-blur">
-          <div className="flex justify-between items-start mb-4">
-            <h2 className="text-xl font-semibold text-white">Install the app for easier access!</h2>
-            <button onClick={() => setShowInstallPrompt(false)} className="text-gray-400 hover:text-white">
-              <X className="w-6 h-6" />
+      {showInstallPrompt && (
+        <motion.div
+          initial={{ opacity: 0, y: 100 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+          className="md:hidden fixed bottom-0 left-0 right-0 z-50 m-4"
+        >
+          <div className="rounded-2xl border border-gray-700 bg-gray-900/90 p-6 shadow-lg backdrop-blur">
+            <div className="flex justify-between items-start mb-4">
+              <h2 className="text-xl font-semibold text-white">Install the app for easier access!</h2>
+              <button onClick={() => setShowInstallPrompt(false)} className="text-gray-400 hover:text-white">
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+            <ol className="space-y-3 text-gray-300 text-sm mb-6">
+              {isIOS ? (
+                <>
+                  <li className="flex items-center gap-2">
+                    1. Tap the <Share className="h-5 w-5" /> Share button
+                  </li>
+                  <li>2. Scroll down and tap "Add to Home Screen"</li>
+                  <li>3. Tap "Add" in the top right corner</li>
+                </>
+              ) : (
+                <>
+                  <li className="flex items-center gap-2">
+                    1. Tap the menu icon{" "}
+                    <svg
+                      className="h-5 w-5"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <circle cx="12" cy="12" r="1" />
+                      <circle cx="12" cy="5" r="1" />
+                      <circle cx="12" cy="19" r="1" />
+                    </svg>{" "}
+                    in your browser
+                  </li>
+                  <li>2. Tap "Add to Home screen"</li>
+                  <li>3. Tap "Add" to confirm</li>
+                </>
+              )}
+              <li className="flex items-center gap-2">4. Look for the Subworld icon on your home screen</li>
+            </ol>
+            <button
+              onClick={() => setShowInstallPrompt(false)}
+              className="w-full bg-[#3c5ac6] hover:bg-[#3c5ac6]/90 text-white py-3 rounded-xl transition-colors duration-300 shadow-md"
+            >
+              Got it!
             </button>
           </div>
-          <ol className="space-y-3 text-gray-300 text-sm mb-6">
-            {isIOS ? (
-              <>
-                <li className="flex items-center gap-2">
-                  1. Tap the <Share className="h-5 w-5" /> Share button
-                </li>
-                <li>2. Scroll down and tap "Add to Home Screen"</li>
-                <li>3. Tap "Add" in the top right corner</li>
-              </>
-            ) : (
-              <>
-                <li className="flex items-center gap-2">
-                  1. Tap the menu icon{" "}
-                  <svg
-                    className="h-5 w-5"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <circle cx="12" cy="12" r="1" />
-                    <circle cx="12" cy="5" r="1" />
-                    <circle cx="12" cy="19" r="1" />
-                  </svg>{" "}
-                  in your browser
-                </li>
-                <li>2. Tap "Add to Home screen"</li>
-                <li>3. Tap "Add" to confirm</li>
-              </>
-            )}
-            <li className="flex items-center gap-2">4. Look for the Subworld icon on your home screen</li>
-          </ol>
-          <button
-            onClick={() => setShowInstallPrompt(false)}
-            className="w-full bg-[#3c5ac6] hover:bg-[#3c5ac6]/90 text-white py-3 rounded-xl transition-colors duration-300 shadow-md"
-          >
-            Got it!
-          </button>
-        </div>
-      </motion.div>
+        </motion.div>
+      )}
     </motion.main>
   )
 }
