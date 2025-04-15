@@ -36,12 +36,12 @@ export default function Landing() {
     }),
   }
 
-  // Simplified navigation handler - just navigate, no conditions
-  const handleStartMessaging = () => {
+  // Fixed navigation handler - properly handles the asynchronous router.push
+  const handleStartMessaging = async () => {
     console.log('Start messaging button clicked, navigating to /welcome')
     
     try {
-      router.push('/welcome')
+      await router.push('/welcome')
     } catch (err) {
       console.error('Router navigation failed:', err)
       // Fallback to direct navigation
@@ -95,7 +95,7 @@ export default function Landing() {
           transition={{ delay: 0.5, duration: 0.5 }}
           className="space-y-6"
         >
-          {/* Simple button that works for all users */}
+          {/* Button with fixed navigation logic */}
           <motion.button
             onClick={handleStartMessaging}
             whileHover={{ scale: 1.05 }}
