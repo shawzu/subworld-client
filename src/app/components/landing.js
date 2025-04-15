@@ -37,9 +37,10 @@ export default function Landing() {
   }
 
   // Fixed navigation handler - properly handles the asynchronous router.push
-  const handleStartMessaging = () => {
+  const handleStartMessaging = async () => {
     router.push('/welcome')
   }
+
   
   return (
     <motion.main
@@ -89,6 +90,7 @@ export default function Landing() {
         >
           {/* Button with fixed navigation logic */}
           <motion.button
+            type="button"
             onClick={handleStartMessaging}
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
