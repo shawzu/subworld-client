@@ -1,11 +1,13 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { Users, Send, ArrowLeft, Settings } from 'lucide-react'
+import { Users, Send, ArrowLeft, Settings, X } from 'lucide-react'
+import { Upload } from 'lucide-react'
 import contactStore from '../../utils/ContactStore'
 import conversationManager from '../../utils/ConversationManager'
-import { Upload } from 'lucide-react'
 import GroupCallButton from './GroupCallButton'
+import GroupFileMessage from './GroupFileMessage'
+import { uploadGroupFile } from './GroupFileHandler'
 
 export default function GroupChat({
     group,
@@ -20,6 +22,11 @@ export default function GroupChat({
     const [isLoading, setIsLoading] = useState(true)
     const [sending, setSending] = useState(false)
     const [memberCount, setMemberCount] = useState(group?.members?.length || 0)
+    
+    // File upload state
+    const [selectedFile, setSelectedFile] = useState(null)
+    const [showFilePreview, setShowFilePreview] = useState(false)
+    const [uploadingFile, setUploadingFile] = useState(false)
 
     // Scroll to bottom of message list
     const scrollToBottom = () => {
@@ -178,6 +185,34 @@ export default function GroupChat({
         return contact?.alias || publicKeyStr;
     }
 
+    // Process message to identify file messages
+    const processMessage = (msg) => {
+        // Check if this might be a file message
+        if (typeof msg.content === 'string') {
+            try {
+                const parsed = JSON.parse(msg.content);
+                if (parsed && parsed.messageType === 'file') {
+                    // This is a file message - add the file data
+                    return {
+                        ...msg,
+                        isFile: true,
+                        fileData: {
+                            fileID: parsed.fileID,
+                            fileName: parsed.fileName,
+                            fileType: parsed.fileType,
+                            fileSize: parsed.fileSize
+                        }
+                    };
+                }
+            } catch (e) {
+                // Not a file message, just a regular message
+            }
+        }
+        
+        // Return the original message
+        return msg;
+    };
+
     // Handle initiating a group call
     const handleInitiateGroupCall = (groupId, groupName, members) => {
         console.log('Initiating group call for:', groupId, groupName, members);
@@ -211,6 +246,51 @@ export default function GroupChat({
         } catch (error) {
             console.error('Error in handleInitiateGroupCall:', error);
             alert('An error occurred while trying to start the group call. Please try again.');
+        }
+    };
+
+    // Handle file selection
+    const handleFileSelect = (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            // Check file size (limit to 10MB)
+            if (file.size > 10 * 1024 * 1024) {
+                alert('File is too large. Please select a file under 10MB.');
+                return;
+            }
+
+            setSelectedFile(file);
+            setShowFilePreview(true);
+        }
+    };
+
+    // Handle file upload
+    const handleSendFile = async () => {
+        if (!selectedFile || !group?.id || !currentUserKey) return;
+
+        try {
+            setUploadingFile(true);
+
+            // Upload the file through the handler
+            await uploadGroupFile(
+                group.id,
+                selectedFile,
+                currentUserKey
+            );
+
+            // Close the preview and reset state
+            setSelectedFile(null);
+            setShowFilePreview(false);
+
+            // Reload the latest messages
+            setTimeout(() => {
+                loadGroupData();
+            }, 1000);
+        } catch (error) {
+            console.error('Failed to upload file:', error);
+            alert('Failed to upload file. Please try again.');
+        } finally {
+            setUploadingFile(false);
         }
     };
 
@@ -304,27 +384,116 @@ export default function GroupChat({
                         <p className="text-sm">Send a message to start the conversation</p>
                     </div>
                 ) : (
-                    messages.map((msg) => (
-                        <div
-                            key={`${msg.id || `msg-${Date.now()}-${Math.random()}`}`}
-                            className={`${msg.sender === currentUserKey ? 'text-right' : ''}`}
-                        >
-                            {msg.sender !== currentUserKey && (
-                                <div className="text-xs text-gray-500 mb-1">
-                                    {getContactName(msg.sender)}
+                    messages.map((msg) => {
+                        // Process the message to check if it's a file
+                        const processedMsg = processMessage(msg);
+                        
+                        // Add sender name for display
+                        processedMsg.senderName = getContactName(processedMsg.sender);
+                        
+                        // If this is a file message, render the file component
+                        if (processedMsg.isFile) {
+                            return (
+                                <GroupFileMessage
+                                    key={processedMsg.id || `msg-${Date.now()}-${Math.random()}`}
+                                    message={processedMsg}
+                                    formatMessageTime={formatMessageTime}
+                                    currentUserKey={currentUserKey}
+                                    groupId={group.id}
+                                />
+                            );
+                        }
+                        
+                        // Otherwise render a standard text message
+                        return (
+                            <div
+                                key={processedMsg.id || `msg-${Date.now()}-${Math.random()}`}
+                                className={`${processedMsg.sender === currentUserKey ? 'text-right' : ''}`}
+                            >
+                                {processedMsg.sender !== currentUserKey && (
+                                    <div className="text-xs text-gray-500 mb-1">
+                                        {processedMsg.senderName}
+                                    </div>
+                                )}
+                                <div className={`inline-block p-3 px-5 rounded-2xl ${processedMsg.sender === currentUserKey ? 'bg-blue-600' : 'bg-gray-800'}`}>
+                                    {processedMsg.content}
                                 </div>
-                            )}
-                            <div className={`inline-block p-3 px-5 rounded-2xl ${msg.sender === currentUserKey ? 'bg-blue-600' : 'bg-gray-800'}`}>
-                                {msg.content}
+                                <div className="text-xs text-gray-500 mt-2">
+                                    {formatMessageTime ? formatMessageTime(processedMsg.timestamp) : new Date(processedMsg.timestamp).toLocaleTimeString()}
+                                </div>
                             </div>
-                            <div className="text-xs text-gray-500 mt-2">
-                                {formatMessageTime ? formatMessageTime(msg.timestamp) : new Date(msg.timestamp).toLocaleTimeString()}
-                            </div>
-                        </div>
-                    ))
+                        );
+                    })
                 )}
                 <div ref={messagesEndRef} />
             </div>
+
+            {/* File Upload Preview Modal */}
+            {showFilePreview && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
+                    <div className="bg-gray-800 rounded-lg p-6 max-w-md w-full">
+                        <div className="flex justify-between items-center mb-4">
+                            <h2 className="text-xl font-semibold">Send File to Group</h2>
+                            <button
+                                onClick={() => {
+                                    setShowFilePreview(false);
+                                    setSelectedFile(null);
+                                }}
+                                className="text-gray-400 hover:text-white"
+                            >
+                                <X size={24} />
+                            </button>
+                        </div>
+
+                        <div className="mb-4 p-4 bg-gray-700 rounded-lg">
+                            <div className="flex items-center">
+                                <div className="w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center mr-3">
+                                    <Upload size={20} className="text-white" />
+                                </div>
+                                <div>
+                                    <div className="font-medium">{selectedFile.name}</div>
+                                    <div className="text-sm text-gray-400">
+                                        {selectedFile.type || 'Unknown type'} • {
+                                            selectedFile.size < 1024 ? selectedFile.size + ' bytes' :
+                                                selectedFile.size < 1024 * 1024 ? (selectedFile.size / 1024).toFixed(1) + ' KB' :
+                                                    (selectedFile.size / (1024 * 1024)).toFixed(1) + ' MB'
+                                        }
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="flex justify-end">
+                            <button
+                                onClick={() => {
+                                    setShowFilePreview(false);
+                                    setSelectedFile(null);
+                                }}
+                                className="px-4 py-2 bg-gray-700 text-white rounded-lg mr-2"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={handleSendFile}
+                                className="px-4 py-2 bg-blue-600 text-white rounded-lg flex items-center"
+                                disabled={uploadingFile}
+                            >
+                                {uploadingFile ? (
+                                    <>
+                                        <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-white mr-2"></div>
+                                        Sending...
+                                    </>
+                                ) : (
+                                    <>
+                                        <Send size={16} className="mr-2" />
+                                        Send File
+                                    </>
+                                )}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Message Input */}
             <form onSubmit={handleSendMessage} className="absolute bottom-0 left-0 right-0 p-6 md:mb-0 mb-16">
@@ -343,7 +512,7 @@ export default function GroupChat({
                             id="group-file-upload"
                             type="file"
                             className="hidden"
-                        // Add file handling when ready
+                            onChange={handleFileSelect}
                         />
                     </label>
                     <button

@@ -99,7 +99,7 @@ export default function GroupCallButton({
       } text-white transition-colors duration-200 flex items-center justify-center`}
       title={!voiceServiceReady ? 'Voice service initializing...' : `Start group call with ${group.name || 'group'}`}
     >
-      <Users size={20} className={isCalling ? 'animate-pulse' : ''} />
+      <Phone size={20} className={isCalling ? 'animate-pulse' : ''} />
     </button>
   )
 }

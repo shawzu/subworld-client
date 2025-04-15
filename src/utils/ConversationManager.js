@@ -1453,6 +1453,125 @@ class ConversationManager {
   }
 
   /**
+ * Send a file in a group through the network
+ * @param {string} groupId - Group ID
+ * @param {File} file - The file to send
+ * @returns {Promise<Object>} - The sent message
+ */
+async sendGroupFile(groupId, file) {
+  try {
+    if (!groupId || !file || !subworldNetwork) {
+      throw new Error('Missing required parameters or network service');
+    }
+
+    // Check if we have permission to post to this group
+    const group = await this.refreshGroup(groupId);
+    if (!group || !Array.isArray(group.members) || !group.members.includes(this.currentUserKey)) {
+      throw new Error('Not a member of this group');
+    }
+
+    // Format file size for logging
+    const fileSizeFormatted = this.formatFileSize(file.size);
+    console.log(`Uploading ${file.name} (${fileSizeFormatted}) to group ${groupId}`);
+
+    // Create FormData for multipart upload
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('group_id', groupId);
+    formData.append('sender_id', this.currentUserKey);
+    formData.append('file_name', file.name);
+    formData.append('file_type', file.type || 'application/octet-stream');
+
+    // Generate a unique ID for this file
+    const fileId = `groupfile-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+    formData.append('content_id', fileId);
+
+    // Get current node from network service
+    const currentNode = subworldNetwork.getCurrentNode();
+    if (!currentNode) {
+      throw new Error('No network node available');
+    }
+
+    const nodeId = currentNode.id || 'bootstrap1';
+    const proxyBaseUrl = 'https://proxy.inhouses.xyz/api/';
+    const uploadUrl = `${proxyBaseUrl}${nodeId}/groups/files/upload`;
+
+    console.log(`Uploading file to: ${uploadUrl}`);
+
+    // Upload file to server
+    const response = await fetch(uploadUrl, {
+      method: 'POST',
+      body: formData
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('File upload failed:', errorText);
+      throw new Error(`Server returned error: ${response.status}`);
+    }
+
+    const result = await response.json();
+    console.log('File upload result:', result);
+
+    if (result.status !== 'success') {
+      throw new Error('Upload failed on server');
+    }
+
+    // Create file metadata for the group message
+    const fileMetadata = {
+      messageType: 'file',
+      fileID: result.id || fileId,
+      fileName: file.name,
+      fileType: file.type || 'application/octet-stream',
+      fileSize: file.size,
+      timestamp: new Date().toISOString(),
+      isGroupFile: true
+    };
+
+    // Send a message to the group with the file metadata
+    const metadataMessage = await this.sendGroupMessage(
+      groupId,
+      JSON.stringify(fileMetadata)
+    );
+
+    // Create a file message object for local tracking
+    const fileMessage = {
+      id: metadataMessage.id || `file-${Date.now()}`,
+      sender: this.currentUserKey,
+      groupId: groupId,
+      content: `[File: ${file.name}]`,
+      timestamp: new Date().toISOString(),
+      status: 'sent',
+      isFile: true,
+      fileData: {
+        fileID: result.id || fileId,
+        fileName: file.name,
+        fileType: file.type,
+        fileSize: file.size
+      },
+      isGroupMsg: true
+    };
+
+    // Store in local messages
+    if (!this.groupMessages[groupId]) {
+      this.groupMessages[groupId] = [];
+    }
+    this.groupMessages[groupId].push(fileMessage);
+    this._persistGroupMessages();
+
+    // Update group last message time
+    this._updateGroupLastMessageTime(groupId, fileMessage.timestamp);
+
+    return fileMessage;
+  } catch (error) {
+    console.error('Error in sendGroupFile:', error);
+    throw error;
+  }
+}
+
+
+
+  /**
   * Get group previews for the conversation list
   * This method ensures group IDs are consistently formatted
   */

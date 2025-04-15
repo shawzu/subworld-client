@@ -36,23 +36,12 @@ export default function Landing() {
     }),
   }
 
-  // IMPROVED navigation handler with multiple fallbacks
+  // Simplified navigation handler - just navigate, no conditions
   const handleStartMessaging = () => {
     console.log('Start messaging button clicked, navigating to /welcome')
     
-    // Try all available navigation methods
     try {
-      // First attempt: Use Next.js router
       router.push('/welcome')
-      
-      // Second attempt after a brief delay if needed
-      setTimeout(() => {
-        // Check if we've successfully navigated
-        if (window.location.pathname !== '/welcome') {
-          console.log('Router navigation may have failed, using direct URL change')
-          window.location.href = '/welcome'
-        }
-      }, 100)
     } catch (err) {
       console.error('Router navigation failed:', err)
       // Fallback to direct navigation
@@ -106,26 +95,16 @@ export default function Landing() {
           transition={{ delay: 0.5, duration: 0.5 }}
           className="space-y-6"
         >
-          {/* IMPROVED: Multiple button versions to ensure it works everywhere */}
-          <div className="relative w-full max-w-md mx-auto">
-            {/* Version 1: Standard button for most browsers */}
-            <motion.button
-              onClick={handleStartMessaging}
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
-              className="w-full h-14 text-lg bg-white hover:bg-gray-200 text-black flex items-center justify-center gap-2 rounded-2xl shadow-lg transition-colors duration-300 cursor-pointer"
-            >
-              Start Messaging
-              <ArrowRight className="w-5 h-5" />
-            </motion.button>
-            
-            {/* Version 2: Direct link for iOS PWA fallback (positioned absolutely on top) */}
-            <a 
-              href="/welcome"
-              className="absolute inset-0 opacity-0"
-              aria-hidden="true"
-            />
-          </div>
+          {/* Simple button that works for all users */}
+          <motion.button
+            onClick={handleStartMessaging}
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            className="w-full max-w-md mx-auto h-14 text-lg bg-white hover:bg-gray-200 text-black flex items-center justify-center gap-2 rounded-2xl shadow-lg transition-colors duration-300 cursor-pointer"
+          >
+            Start Messaging
+            <ArrowRight className="w-5 h-5" />
+          </motion.button>
 
           <motion.p
             whileHover={{ scale: 1.05 }}
@@ -136,7 +115,7 @@ export default function Landing() {
         </motion.div>
       </div>
 
-      {/* Install Prompt */}
+      {/* Install Prompt - Still shown but doesn't block functionality */}
       <motion.div
         initial={{ opacity: 0, y: 100 }}
         animate={{ opacity: showInstallPrompt ? 1 : 0, y: showInstallPrompt ? 0 : 100 }}
