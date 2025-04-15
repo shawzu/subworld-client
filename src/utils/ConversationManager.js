@@ -1129,7 +1129,7 @@ class ConversationManager {
         ttl: ttlSeconds
       };
 
-   
+
       if (!this.groupMessages[groupId]) {
         this.groupMessages[groupId] = [];
       }
@@ -1317,6 +1317,40 @@ class ConversationManager {
     }
   }
 
+  /**
+ * Update group members after adding someone to the group
+ * @param {string} groupId - The group ID
+ * @param {string} memberPublicKey - The new member's public key
+ */
+  async updateGroupMembersLocally(groupId, memberPublicKey) {
+    try {
+      // Find the group in our local state
+      const groupIndex = this.groups.findIndex(g => g.id === groupId);
+      if (groupIndex >= 0) {
+        const group = this.groups[groupIndex];
+
+        // Check if the member already exists
+        if (!group.members.includes(memberPublicKey)) {
+          // Add member to the local state immediately
+          group.members.push(memberPublicKey);
+          this.groups[groupIndex] = group;
+          this._persistGroups();
+
+          // Dispatch an event so components can update
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('groupUpdated', {
+              detail: { groupId, action: 'memberAdded', memberPublicKey }
+            }));
+          }
+
+          console.log(`Added member ${memberPublicKey} to group ${groupId} in local state`);
+        }
+      }
+    } catch (error) {
+      console.error('Error updating group members locally:', error);
+    }
+  }
+
 
   async addGroupMember(groupId, memberPublicKey) {
     if (!subworldNetwork) {
@@ -1340,6 +1374,9 @@ class ConversationManager {
       if (!result.success) {
         throw new Error('Failed to add group member via network service');
       }
+
+      // Update local state immediately without waiting for refresh
+      await this.updateGroupMembersLocally(groupId, memberPublicKey);
 
       // Immediately refresh the group from the network to get updated members list
       const updatedGroup = await this.refreshGroup(groupId);
@@ -1381,8 +1418,6 @@ class ConversationManager {
       throw error;
     }
   }
-
-
 
 
   /**

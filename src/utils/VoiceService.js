@@ -117,10 +117,10 @@ class VoiceService {
    */
   async initialize() {
     if (this.initialized) return true;
-
+  
     try {
       this.log('Initializing VoiceService with Socket.io and PeerJS');
-
+  
       // Check for localStorage to get user's public key
       if (typeof window !== 'undefined') {
         const publicKeyDisplay = localStorage.getItem('subworld_public_key_display');
@@ -128,32 +128,35 @@ class VoiceService {
           this.log('No public key found in localStorage');
           return false;
         }
-
+  
         this.userPublicKey = publicKeyDisplay;
         this.log(`User public key: ${this.userPublicKey}`);
-
+  
         // Detect network type
         this._detectNetworkType();
-
+  
         // Fetch TURN credentials before initializing connections
         await this._fetchTurnCredentials();
-
+  
         // Initialize Socket.io
         this.socket = io(this.serverUrl, {
           reconnectionAttempts: 5,
           timeout: 10000,
           transports: ['websocket', 'polling']
         });
-
+  
         // Set up socket event listeners
         this._setupSocketListeners();
-
+        
+        // ADD THIS LINE HERE - Set up enhanced socket connection for better mobile compatibility
+        this._setupEnhancedSocketConnection();
+  
         // Register with the signaling server
         this.socket.emit('register', { publicKey: this.userPublicKey });
-
+  
         // Initialize PeerJS (but don't connect yet - we'll do this per call)
         this.peer = null; // Will be created on demand per call
-
+  
         // Initialize AudioContext if available (will be fully activated on call)
         if (typeof window !== 'undefined' && window.AudioContext) {
           try {
@@ -165,18 +168,18 @@ class VoiceService {
             this.audioContext = null;
           }
         }
-
+  
         this.initialized = true;
-
+  
         // Make available globally
         if (typeof window !== 'undefined') {
           window.voiceService = this;
           this.log('Voice service registered globally');
         }
-
+  
         return true;
       }
-
+  
       return false;
     } catch (error) {
       console.error('Failed to initialize voice service:', error);
@@ -656,7 +659,25 @@ class VoiceService {
       this.isGroupCall = true;
       this.groupId = normalizedGroupId;
       this.groupName = groupName || 'Group Call';
-      this.groupMembers = Array.isArray(members) ? [...members] : [];
+
+      // IMPROVEMENT: Get fresh member list from server when available
+      if (typeof window !== 'undefined' && window.conversationManager) {
+        try {
+          // Refresh the group data to get the latest member list
+          const freshGroup = await window.conversationManager.refreshGroup(normalizedGroupId);
+          if (freshGroup && Array.isArray(freshGroup.members)) {
+            this.log('Using fresh member list from server:', freshGroup.members.length, 'members');
+            this.groupMembers = [...freshGroup.members];
+          } else {
+            this.groupMembers = Array.isArray(members) ? [...members] : [];
+          }
+        } catch (refreshErr) {
+          console.warn('Could not refresh group data, using provided members list:', refreshErr);
+          this.groupMembers = Array.isArray(members) ? [...members] : [];
+        }
+      } else {
+        this.groupMembers = Array.isArray(members) ? [...members] : [];
+      }
 
       // Request microphone and establish local stream
       await this._setupLocalStream();
@@ -710,6 +731,86 @@ class VoiceService {
       throw error;
     }
   }
+
+
+  /**
+ * Improve socket connection with keepalive and reconnect logic
+ * Call this method from initialize()
+ */
+  _setupEnhancedSocketConnection() {
+    if (!this.socket) return;
+
+    // Store the original socket
+    const originalSocket = this.socket;
+
+    // Add ping/pong for keepalive (important for mobile)
+    this.keepAliveInterval = setInterval(() => {
+      if (this.socket && this.socket.connected) {
+        // Send a ping to keep connection alive
+        this.socket.emit('ping', { timestamp: Date.now() });
+      } else if (this.socket) {
+        // Try to reconnect if disconnected
+        this.socket.connect();
+      }
+    }, 25000); // Send keepalive every 25 seconds
+
+    // Enhanced reconnection strategy
+    this.socket.io.on('reconnect_attempt', (attempt) => {
+      this.log(`Socket reconnect attempt: ${attempt}`);
+
+      // Increase timeout for later reconnection attempts
+      this.socket.io.opts.timeout = Math.min(20000, 5000 * (attempt + 1));
+
+      // Disable transport upgrades on mobile to improve stability
+      if (this.isMobileNetwork) {
+        this.socket.io.opts.upgrade = false;
+      }
+    });
+
+    // Handle reconnect success
+    this.socket.on('reconnect', () => {
+      this.log('Socket reconnected. Re-registering with signaling server.');
+
+      // Re-register with the server
+      this.socket.emit('register', { publicKey: this.userPublicKey });
+
+      // Check for any missed calls if we have a conversation manager
+      this._checkForMissedCalls();
+    });
+
+
+  }
+
+  /**
+ * Check for any missed calls or active calls we should join
+ * This helps with mobile devices that might have connectivity issues
+ */
+  async _checkForMissedCalls() {
+    try {
+      if (typeof window === 'undefined' || !window.conversationManager) return;
+
+      this.log('Checking for missed or active calls after reconnection');
+
+      // Force refresh of conversations to check for call invitations
+      await window.conversationManager.fetchNewMessages();
+
+
+    } catch (err) {
+      console.warn('Error checking for missed calls:', err);
+    }
+  }
+
+  /**
+ * Clean up keepalive interval on call end or component unmount
+ * Add this call to the _cleanupCall method
+ */
+  _cleanupSocketEnhancements() {
+    if (this.keepAliveInterval) {
+      clearInterval(this.keepAliveInterval);
+      this.keepAliveInterval = null;
+    }
+  }
+
 
   /**
    * Setup local audio stream with optimal settings
@@ -1635,14 +1736,13 @@ class VoiceService {
         }
       });
 
-      // Set up incoming call handler
       this.peer.on('call', (incomingCall) => {
         this.log('Received incoming PeerJS call from:', incomingCall.peer);
 
         // Extract the caller's public key from the peer ID
         const callerPublicKey = incomingCall.peer;
 
-        this.log(`Call from peer ${callerPeerId}, extracted key: ${callerPublicKey}`);
+        this.log(`Call from peer ${incomingCall.peer}, extracted key: ${callerPublicKey}`);
 
         // Answer the call with our local stream
         incomingCall.answer(this.localStream);
@@ -2142,6 +2242,8 @@ class VoiceService {
       clearInterval(this.audioMonitoringInterval);
       this.audioMonitoringInterval = null;
     }
+
+    this._cleanupSocketEnhancements();
 
     // Stop local media tracks
     if (this.localStream) {
