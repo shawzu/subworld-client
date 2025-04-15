@@ -360,12 +360,13 @@ class SubworldNetworkService {
   }
 
   /**
-   * Send a message to a recipient
-   * @param {string} recipientPublicKey - Recipient's public key display
-   * @param {string} content - Message content
-   * @returns {Promise<{success: boolean, messageId: string}>}
-   */
-  async sendMessage(recipientPublicKey, content) {
+  * Send a message to a recipient with TTL
+  * @param {string} recipientPublicKey - Recipient's public key display
+  * @param {string} content - Message content
+  * @param {number} ttlSeconds - Optional TTL in seconds
+  * @returns {Promise<{success: boolean, messageId: string}>}
+  */
+  async sendMessage(recipientPublicKey, content, ttlSeconds = null) {
     try {
       if (!this.currentNode) {
         throw new Error('No node selected');
@@ -389,6 +390,12 @@ class SubworldNetworkService {
         timestamp: new Date().toISOString(),
         id: `msg-${Date.now()}`
       };
+
+      // Add TTL if provided
+      if (ttlSeconds && typeof ttlSeconds === 'number' && ttlSeconds > 0) {
+        message.ttl = ttlSeconds;
+        message.expires_at = new Date(Date.now() + ttlSeconds * 1000).toISOString();
+      }
 
       // Use proxy instead of direct node connection
       const nodeId = this.currentNode.id || 'bootstrap1';
@@ -718,12 +725,13 @@ class SubworldNetworkService {
   }
 
   /**
- * Upload a file to the network with encryption
- * @param {string} recipientPublicKey - Recipient's public key
- * @param {File} file - The file to upload
- * @returns {Promise<Object>} - Upload result
- */
-  async uploadFile(recipientPublicKey, file) {
+  * Upload a file to the network with optional TTL
+  * @param {string} recipientPublicKey - Recipient's public key
+  * @param {File} file - The file to upload
+  * @param {number} ttlSeconds - Optional TTL in seconds
+  * @returns {Promise<Object>} - Upload result
+  */
+  async uploadFile(recipientPublicKey, file, ttlSeconds = null) {
     try {
       if (!this.currentNode) {
         throw new Error('No node selected');
@@ -753,6 +761,13 @@ class SubworldNetworkService {
       formData.append('sender_id', this.keyPair.publicKeyDisplay);
       formData.append('file_name', file.name);
       formData.append('file_type', file.type);
+
+      // Add TTL if provided
+      if (ttlSeconds && typeof ttlSeconds === 'number' && ttlSeconds > 0) {
+        formData.append('ttl', ttlSeconds.toString());
+        const expiryDate = new Date(Date.now() + ttlSeconds * 1000);
+        formData.append('expires_at', expiryDate.toISOString());
+      }
 
       const contentId = `file-${Date.now()}`;
       formData.append('content_id', contentId);
@@ -1191,7 +1206,7 @@ class SubworldNetworkService {
     }
   }
 
-  async sendGroupMessage(groupId, content) {
+  async sendGroupMessage(groupId, content, ttlSeconds = null) {
     try {
       if (!this.currentNode || !this.keyPair) {
         throw new Error('No node selected or user keys not available');
@@ -1207,6 +1222,12 @@ class SubworldNetworkService {
         id: `grpmsg-${Date.now()}`,
         is_group_msg: true
       };
+
+      // Add TTL if provided
+      if (ttlSeconds && typeof ttlSeconds === 'number' && ttlSeconds > 0) {
+        message.ttl = ttlSeconds;
+        message.expires_at = new Date(Date.now() + ttlSeconds * 1000).toISOString();
+      }
 
       // Use proxy for the API request
       const nodeId = this.currentNode.id || 'bootstrap1';
@@ -1236,6 +1257,7 @@ class SubworldNetworkService {
       throw error;
     }
   }
+
 
   async getGroupMessages(groupId) {
     try {
@@ -1371,19 +1393,19 @@ class SubworldNetworkService {
       if (!this.currentNode || !this.keyPair) {
         throw new Error('No node selected or user keys not available');
       }
-  
-   
+
+
       const requestData = {
         group_id: groupId,
         user_id: memberPublicKey,
-        added_by: this.keyPair.publicKeyDisplay 
+        added_by: this.keyPair.publicKeyDisplay
       };
-  
+
 
       const nodeId = this.currentNode.id || 'bootstrap1';
       console.log('Adding member to group via proxy:', `${this.proxyBaseUrl}${nodeId}/groups/add_member`);
-  
-  
+
+
       const response = await fetch(`${this.proxyBaseUrl}${nodeId}/groups/join`, {
         method: 'POST',
         headers: {
@@ -1395,13 +1417,13 @@ class SubworldNetworkService {
           admin_id: this.keyPair.publicKeyDisplay
         })
       });
-  
+
       if (!response.ok) {
         const errorData = await response.text();
         console.error('Server response:', errorData);
         throw new Error(`Failed to add member to group: ${response.status}`);
       }
-  
+
       const data = await response.json();
       return { success: true };
     } catch (error) {

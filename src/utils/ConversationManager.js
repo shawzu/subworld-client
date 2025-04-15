@@ -290,43 +290,69 @@ class ConversationManager {
   }
 
   /**
-   * Send a message in a conversation
-   * @param {string} contactPublicKey - Recipient's public key
-   * @param {string} content - Message content
-   * @returns {Promise<Object>} - The sent message
-   */
+  * Modified sendMessage method with expiry support
+  * @param {string} contactPublicKey - Recipient's public key
+  * @param {string} content - Message content
+  * @returns {Promise<Object>} - The sent message
+  */
   async sendMessage(contactPublicKey, content) {
     try {
       // Ensure conversation exists
-      const conversation = this.createOrUpdateConversation(contactPublicKey)
+      const conversation = this.createOrUpdateConversation(contactPublicKey);
 
-      // Send through network service
-      const result = await subworldNetwork.sendMessage(contactPublicKey, content)
+      // Get the auto-deletion setting (in hours)
+      let expiryHours = 24; // Default 24 hours
+      try {
+        const storedExpiry = localStorage.getItem('subworld_message_expiry');
+        if (storedExpiry) {
+          expiryHours = parseInt(storedExpiry, 10);
+          if (isNaN(expiryHours) || expiryHours < 1) {
+            expiryHours = 24;
+          }
+        }
+      } catch (err) {
+        console.warn('Error reading expiry setting:', err);
+      }
 
-      // Create message object
+      const ttlSeconds = expiryHours * 3600; // Convert hours to seconds
+
+      // Send through network service with TTL
+      const result = await subworldNetwork.sendMessage(
+        contactPublicKey,
+        content,
+        ttlSeconds
+      );
+
+      // Calculate expiry timestamp
+      const expiryDate = new Date(Date.now() + ttlSeconds * 1000);
+      const expiryTimestamp = expiryDate.toISOString();
+
+      // Create message object with expiry information
       const message = {
         id: result.messageId || `local-${Date.now()}`,
         sender: this.currentUserKey,
         recipient: contactPublicKey,
         content,
         timestamp: new Date().toISOString(),
-        status: 'sent'
-      }
+        status: 'sent',
+        expiresAt: expiryTimestamp,
+        ttl: ttlSeconds
+      };
 
       // Add to conversation
-      conversation.messages.push(message)
-      conversation.lastMessageTime = message.timestamp
+      conversation.messages.push(message);
+      conversation.lastMessageTime = message.timestamp;
 
       // Update conversation order based on last message time
-      this._sortConversationsByTime()
+      this._sortConversationsByTime();
 
       // Persist changes
-      this._persistConversations()
+      this._persistConversations();
 
-      return message
+      return message;
     } catch (error) {
-      console.error('Error sending message:', error)
-      throw error
+      console.error('Error sending message:', error);
+      throw error;
     }
   }
 
@@ -562,11 +588,11 @@ class ConversationManager {
   }
 
   /**
-   * Send a file in a conversation through the network
-   * @param {string} contactPublicKey - Recipient's public key
-   * @param {File} file - The file to send
-   * @returns {Promise<Object>} - The sent message
-   */
+ * Modified sendFile method with expiry support
+ * @param {string} contactPublicKey - Recipient's public key
+ * @param {File} file - The file to send
+ * @returns {Promise<Object>} - The sent message
+ */
   async sendFile(contactPublicKey, file) {
     try {
       // Ensure conversation exists
@@ -575,10 +601,27 @@ class ConversationManager {
       // Show original file size
       const fileSizeFormatted = this.formatFileSize(file.size);
 
-      // Upload the file to the network (now with encryption)
+      // Get the auto-deletion setting (in hours)
+      let expiryHours = 24; // Default 24 hours
+      try {
+        const storedExpiry = localStorage.getItem('subworld_message_expiry');
+        if (storedExpiry) {
+          expiryHours = parseInt(storedExpiry, 10);
+          if (isNaN(expiryHours) || expiryHours < 1) {
+            expiryHours = 24;
+          }
+        }
+      } catch (err) {
+        console.warn('Error reading expiry setting:', err);
+      }
+
+      const ttlSeconds = expiryHours * 3600; // Convert hours to seconds
+
+      // Upload the file to the network with expiry
       const uploadResult = await subworldNetwork.uploadFile(
         contactPublicKey,
-        file
+        file,
+        ttlSeconds
       );
 
       if (!uploadResult.success || !uploadResult.fileId) {
@@ -588,7 +631,11 @@ class ConversationManager {
       // Create a unique ID for this message
       const messageId = `file-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 
-      // Create message object with file reference
+      // Calculate expiry timestamp
+      const expiryDate = new Date(Date.now() + ttlSeconds * 1000);
+      const expiryTimestamp = expiryDate.toISOString();
+
+      // Create message object with file reference and expiry information
       const message = {
         id: messageId,
         sender: this.currentUserKey,
@@ -600,7 +647,9 @@ class ConversationManager {
         fileID: uploadResult.fileId,
         fileName: file.name,
         fileType: file.type,
-        fileSize: file.size
+        fileSize: file.size,
+        expiresAt: expiryTimestamp,
+        ttl: ttlSeconds
       };
 
       // Add to conversation
@@ -620,7 +669,9 @@ class ConversationManager {
           fileID: uploadResult.fileId,
           fileName: file.name,
           fileType: file.type,
-          fileSize: file.size
+          fileSize: file.size,
+          expiresAt: expiryTimestamp,
+          ttl: ttlSeconds
         };
 
         // Send as JSON string
@@ -638,6 +689,8 @@ class ConversationManager {
       throw error;
     }
   }
+
+
 
   // Helper method to format file size
   formatFileSize(bytes) {
@@ -918,14 +971,14 @@ class ConversationManager {
   async removeGroupMember(groupId, memberPublicKey) {
     // Direct approach - access the network service through window global
     const networkService = typeof window !== 'undefined' ? window.subworldNetwork : null;
-    
+
     // If the global isn't available, try the imported module
     if (!networkService && typeof subworldNetwork !== 'undefined') {
       console.log('Using imported network service');
     } else if (!networkService) {
       throw new Error('Network service is not available');
     }
-    
+
     try {
       // Call the API directly with the proxy
       const response = await fetch(`https://proxy.inhouses.xyz/api/bootstrap1/groups/remove_member`, {
@@ -939,17 +992,17 @@ class ConversationManager {
           admin_id: this.currentUserKey
         })
       });
-      
+
       if (!response.ok) {
         throw new Error(`Failed to remove member: ${response.status}`);
       }
-      
+
       // Parse response
       const data = await response.json();
-      
+
       // Immediately refresh the group
       await this.refreshGroup(groupId);
-      
+
       // Dispatch events for UI update
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('groupUpdated', {
@@ -959,10 +1012,10 @@ class ConversationManager {
             memberPublicKey
           }
         }));
-        
+
         window.dispatchEvent(new CustomEvent('conversationsUpdated'));
       }
-      
+
       return { success: true };
     } catch (error) {
       console.error('Error removing group member:', error);
@@ -1031,18 +1084,39 @@ class ConversationManager {
   }
 
   /**
-   * Send a message to a group
-   */
+  * Modified sendGroupMessage method with expiry support
+  * @param {string} groupId - Group ID
+  * @param {string} content - Message content
+  * @returns {Promise<Object>} - The sent message
+  */
   async sendGroupMessage(groupId, content) {
-    if (!subworldNetwork) {
-      throw new Error('Network service not available');
-    }
-
     try {
-      // Send the message
-      const result = await subworldNetwork.sendGroupMessage(groupId, content);
+      if (!subworldNetwork) {
+        throw new Error('Network service not available');
+      }
 
-      // Create message object
+      // Get the auto-deletion setting (in hours)
+      let expiryHours = 24; // Default 24 hours
+      try {
+        const storedExpiry = localStorage.getItem('subworld_message_expiry');
+        if (storedExpiry) {
+          expiryHours = parseInt(storedExpiry, 10);
+          if (isNaN(expiryHours) || expiryHours < 1) {
+            expiryHours = 24;
+          }
+        }
+      } catch (err) {
+        console.warn('Error reading expiry setting:', err);
+      }
+
+      const ttlSeconds = expiryHours * 3600; // Convert hours to seconds
+      const expiryDate = new Date(Date.now() + ttlSeconds * 1000);
+      const expiryTimestamp = expiryDate.toISOString();
+
+      // Send the message with TTL
+      const result = await subworldNetwork.sendGroupMessage(groupId, content, ttlSeconds);
+
+      // Create message object with expiry information
       const message = {
         id: result.messageId,
         sender: this.currentUserKey,
@@ -1050,10 +1124,12 @@ class ConversationManager {
         content: content,
         timestamp: new Date().toISOString(),
         status: 'sent',
-        isGroupMsg: true
+        isGroupMsg: true,
+        expiresAt: expiryTimestamp,
+        ttl: ttlSeconds
       };
 
-      // Add to local messages
+   
       if (!this.groupMessages[groupId]) {
         this.groupMessages[groupId] = [];
       }
@@ -1067,7 +1143,6 @@ class ConversationManager {
       throw error;
     }
   }
-
   /**
  * Fetch messages for a group
  * @param {string} groupId - The ID of the group to fetch messages for
@@ -1458,116 +1533,116 @@ class ConversationManager {
  * @param {File} file - The file to send
  * @returns {Promise<Object>} - The sent message
  */
-async sendGroupFile(groupId, file) {
-  try {
-    if (!groupId || !file || !subworldNetwork) {
-      throw new Error('Missing required parameters or network service');
-    }
+  async sendGroupFile(groupId, file) {
+    try {
+      if (!groupId || !file || !subworldNetwork) {
+        throw new Error('Missing required parameters or network service');
+      }
 
-    // Check if we have permission to post to this group
-    const group = await this.refreshGroup(groupId);
-    if (!group || !Array.isArray(group.members) || !group.members.includes(this.currentUserKey)) {
-      throw new Error('Not a member of this group');
-    }
+      // Check if we have permission to post to this group
+      const group = await this.refreshGroup(groupId);
+      if (!group || !Array.isArray(group.members) || !group.members.includes(this.currentUserKey)) {
+        throw new Error('Not a member of this group');
+      }
 
-    // Format file size for logging
-    const fileSizeFormatted = this.formatFileSize(file.size);
-    console.log(`Uploading ${file.name} (${fileSizeFormatted}) to group ${groupId}`);
+      // Format file size for logging
+      const fileSizeFormatted = this.formatFileSize(file.size);
+      console.log(`Uploading ${file.name} (${fileSizeFormatted}) to group ${groupId}`);
 
-    // Create FormData for multipart upload
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('group_id', groupId);
-    formData.append('sender_id', this.currentUserKey);
-    formData.append('file_name', file.name);
-    formData.append('file_type', file.type || 'application/octet-stream');
+      // Create FormData for multipart upload
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('group_id', groupId);
+      formData.append('sender_id', this.currentUserKey);
+      formData.append('file_name', file.name);
+      formData.append('file_type', file.type || 'application/octet-stream');
 
-    // Generate a unique ID for this file
-    const fileId = `groupfile-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-    formData.append('content_id', fileId);
+      // Generate a unique ID for this file
+      const fileId = `groupfile-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+      formData.append('content_id', fileId);
 
-    // Get current node from network service
-    const currentNode = subworldNetwork.getCurrentNode();
-    if (!currentNode) {
-      throw new Error('No network node available');
-    }
+      // Get current node from network service
+      const currentNode = subworldNetwork.getCurrentNode();
+      if (!currentNode) {
+        throw new Error('No network node available');
+      }
 
-    const nodeId = currentNode.id || 'bootstrap1';
-    const proxyBaseUrl = 'https://proxy.inhouses.xyz/api/';
-    const uploadUrl = `${proxyBaseUrl}${nodeId}/groups/files/upload`;
+      const nodeId = currentNode.id || 'bootstrap1';
+      const proxyBaseUrl = 'https://proxy.inhouses.xyz/api/';
+      const uploadUrl = `${proxyBaseUrl}${nodeId}/groups/files/upload`;
 
-    console.log(`Uploading file to: ${uploadUrl}`);
+      console.log(`Uploading file to: ${uploadUrl}`);
 
-    // Upload file to server
-    const response = await fetch(uploadUrl, {
-      method: 'POST',
-      body: formData
-    });
+      // Upload file to server
+      const response = await fetch(uploadUrl, {
+        method: 'POST',
+        body: formData
+      });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('File upload failed:', errorText);
-      throw new Error(`Server returned error: ${response.status}`);
-    }
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('File upload failed:', errorText);
+        throw new Error(`Server returned error: ${response.status}`);
+      }
 
-    const result = await response.json();
-    console.log('File upload result:', result);
+      const result = await response.json();
+      console.log('File upload result:', result);
 
-    if (result.status !== 'success') {
-      throw new Error('Upload failed on server');
-    }
+      if (result.status !== 'success') {
+        throw new Error('Upload failed on server');
+      }
 
-    // Create file metadata for the group message
-    const fileMetadata = {
-      messageType: 'file',
-      fileID: result.id || fileId,
-      fileName: file.name,
-      fileType: file.type || 'application/octet-stream',
-      fileSize: file.size,
-      timestamp: new Date().toISOString(),
-      isGroupFile: true
-    };
-
-    // Send a message to the group with the file metadata
-    const metadataMessage = await this.sendGroupMessage(
-      groupId,
-      JSON.stringify(fileMetadata)
-    );
-
-    // Create a file message object for local tracking
-    const fileMessage = {
-      id: metadataMessage.id || `file-${Date.now()}`,
-      sender: this.currentUserKey,
-      groupId: groupId,
-      content: `[File: ${file.name}]`,
-      timestamp: new Date().toISOString(),
-      status: 'sent',
-      isFile: true,
-      fileData: {
+      // Create file metadata for the group message
+      const fileMetadata = {
+        messageType: 'file',
         fileID: result.id || fileId,
         fileName: file.name,
-        fileType: file.type,
-        fileSize: file.size
-      },
-      isGroupMsg: true
-    };
+        fileType: file.type || 'application/octet-stream',
+        fileSize: file.size,
+        timestamp: new Date().toISOString(),
+        isGroupFile: true
+      };
 
-    // Store in local messages
-    if (!this.groupMessages[groupId]) {
-      this.groupMessages[groupId] = [];
+      // Send a message to the group with the file metadata
+      const metadataMessage = await this.sendGroupMessage(
+        groupId,
+        JSON.stringify(fileMetadata)
+      );
+
+      // Create a file message object for local tracking
+      const fileMessage = {
+        id: metadataMessage.id || `file-${Date.now()}`,
+        sender: this.currentUserKey,
+        groupId: groupId,
+        content: `[File: ${file.name}]`,
+        timestamp: new Date().toISOString(),
+        status: 'sent',
+        isFile: true,
+        fileData: {
+          fileID: result.id || fileId,
+          fileName: file.name,
+          fileType: file.type,
+          fileSize: file.size
+        },
+        isGroupMsg: true
+      };
+
+      // Store in local messages
+      if (!this.groupMessages[groupId]) {
+        this.groupMessages[groupId] = [];
+      }
+      this.groupMessages[groupId].push(fileMessage);
+      this._persistGroupMessages();
+
+      // Update group last message time
+      this._updateGroupLastMessageTime(groupId, fileMessage.timestamp);
+
+      return fileMessage;
+    } catch (error) {
+      console.error('Error in sendGroupFile:', error);
+      throw error;
     }
-    this.groupMessages[groupId].push(fileMessage);
-    this._persistGroupMessages();
-
-    // Update group last message time
-    this._updateGroupLastMessageTime(groupId, fileMessage.timestamp);
-
-    return fileMessage;
-  } catch (error) {
-    console.error('Error in sendGroupFile:', error);
-    throw error;
   }
-}
 
 
 

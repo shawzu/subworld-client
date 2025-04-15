@@ -244,6 +244,18 @@ export default function App() {
         // Set public key for display
         setPublicKey(keyPair.publicKeyDisplay);
 
+        try {
+          const savedExpiry = localStorage.getItem('subworld_message_expiry');
+          if (savedExpiry) {
+            const parsedValue = parseInt(savedExpiry, 10);
+            if (!isNaN(parsedValue) && parsedValue > 0) {
+              setAutoDeletionTime(parsedValue);
+            }
+          }
+        } catch (err) {
+          console.warn('Error loading expiry setting:', err);
+        }
+        
         // Check if services exist
         if (typeof subworldNetwork === 'undefined' || !subworldNetwork) {
           console.error('SubworldNetworkService is undefined');
@@ -1197,7 +1209,11 @@ export default function App() {
                             min="1"
                             max="168"
                             value={autoDeletionTime}
-                            onChange={(e) => setAutoDeletionTime(parseInt(e.target.value))}
+                            onChange={(e) => {
+                              const newValue = parseInt(e.target.value);
+                              setAutoDeletionTime(newValue);
+                              localStorage.setItem('subworld_message_expiry', newValue.toString());
+                            }}
                             className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500 mr-3"
                           />
                           <div className="flex items-center bg-gray-700 px-3 py-1 rounded-lg">
@@ -1206,7 +1222,11 @@ export default function App() {
                               min="1"
                               max="168"
                               value={autoDeletionTime}
-                              onChange={(e) => setAutoDeletionTime(parseInt(e.target.value))}
+                              onChange={(e) => {
+                                const newValue = parseInt(e.target.value);
+                                setAutoDeletionTime(newValue);
+                                localStorage.setItem('subworld_message_expiry', newValue.toString());
+                              }}
                               className="w-16 bg-transparent text-white text-center focus:outline-none"
                             />
                             <span className="text-gray-400 ml-1">hours</span>
