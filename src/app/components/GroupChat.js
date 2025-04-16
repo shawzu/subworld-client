@@ -28,19 +28,33 @@ export default function GroupChat({
     const [showFilePreview, setShowFilePreview] = useState(false)
     const [uploadingFile, setUploadingFile] = useState(false)
 
+    // Refs for debouncing and tracking
+    const lastLoadTime = useRef(0)
+    const refreshTimeoutRef = useRef(null)
+    const loadingGroupData = useRef(false)
+    const lastMessageCount = useRef(0)
+
     // Scroll to bottom of message list
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
     }
 
     const loadGroupData = async () => {
+      // Don't reload if we're already loading or if it's been less than 3 seconds since the last load
+      const now = Date.now()
+      if (loadingGroupData.current || now - lastLoadTime.current < 2000) {
+        return;
+      }
+      
       if (!group || !group.id) {
         setMessages([]);
         setIsLoading(false);
         return;
       }
     
+      loadingGroupData.current = true;
       setIsLoading(true);
+      
       try {
         // Initialize with empty array
         let existingMessages = [];
@@ -74,11 +88,17 @@ export default function GroupChat({
           }
         });
     
-        // Set the filtered messages
-        setMessages(uniqueMessages);
+        // Only update messages if they've changed
+        if (uniqueMessages.length !== lastMessageCount.current) {
+          setMessages(uniqueMessages);
+          lastMessageCount.current = uniqueMessages.length;
+        }
     
-        // Try to fetch new messages
-        if (conversationManager) {
+        // Check if we need to fetch new messages (only once per 30 seconds)
+        const shouldFetchNew = now - lastLoadTime.current > 30000;
+        
+        // Try to fetch new messages if enough time has passed
+        if (shouldFetchNew && conversationManager) {
           try {
             await conversationManager.fetchGroupMessages(group.id);
     
@@ -102,7 +122,11 @@ export default function GroupChat({
                 }
               });
     
-              setMessages(uniqueFreshMessages);
+              // Only update if the message count has changed
+              if (uniqueFreshMessages.length !== lastMessageCount.current) {
+                setMessages(uniqueFreshMessages);
+                lastMessageCount.current = uniqueFreshMessages.length;
+              }
             }
           } catch (fetchErr) {
             console.warn('Error fetching group messages:', fetchErr);
@@ -118,157 +142,77 @@ export default function GroupChat({
         // Update member count
         setMemberCount(group.members?.length || 0);
         
+        // Update last load time
+        lastLoadTime.current = now;
+        
       } catch (error) {
         console.error('Error in group message loading flow:', error);
         // Ensure we have at least an empty array
         setMessages([]);
       } finally {
         setIsLoading(false);
+        loadingGroupData.current = false;
       }
     };
 
     // Load messages and set up refresh listeners when group changes
     useEffect(() => {
-        if (!group || !group.id) {
-          setMessages([]);
-          setIsLoading(false);
-          return;
+      if (!group || !group.id) {
+        setMessages([]);
+        setIsLoading(false);
+        return;
+      }
+      
+      // Initial load
+      loadGroupData();
+      
+      // Set up event listener for group updates - with debouncing
+      const handleGroupUpdated = (event) => {
+        // Clear any pending refresh
+        if (refreshTimeoutRef.current) {
+          clearTimeout(refreshTimeoutRef.current);
         }
-      
-        setIsLoading(true);
-        const loadData = async () => {
-          try {
-            // Initialize with empty array
-            let existingMessages = [];
         
-            // Try to get existing messages
-            if (conversationManager) {
-              try {
-                const groupMsgs = conversationManager.getGroupMessages(group.id);
-                if (Array.isArray(groupMsgs)) {
-                  existingMessages = groupMsgs;
-                }
-              } catch (err) {
-                console.warn('Could not load existing group messages:', err);
-              }
-            }
-        
-            // Filter out duplicate messages
-            const uniqueMessages = [];
-            const seenIds = new Set();
-        
-            // Filter out duplicate messages by ID
-            existingMessages.forEach(msg => {
-              // Ensure each message has an ID
-              const msgId = msg.id || `gen-${Date.now()}-${Math.random()}`;
-              
-              // If we haven't seen this ID before, add it
-              if (!seenIds.has(msgId)) {
-                msg.id = msgId; // Ensure ID is set
-                seenIds.add(msgId);
-                uniqueMessages.push(msg);
-              }
-            });
-        
-            // Set the filtered messages
-            setMessages(uniqueMessages);
-        
-            // Try to fetch new messages
-            if (conversationManager) {
-              try {
-                await conversationManager.fetchGroupMessages(group.id);
-        
-                // Update with fresh messages and filter duplicates again
-                const freshMsgs = conversationManager.getGroupMessages(group.id);
-                if (Array.isArray(freshMsgs)) {
-                  // Clear the previous sets for a fresh filtering
-                  const uniqueFreshMessages = [];
-                  const seenFreshIds = new Set();
-        
-                  // Filter out duplicate messages by ID
-                  freshMsgs.forEach(msg => {
-                    // Ensure each message has an ID
-                    const msgId = msg.id || `gen-${Date.now()}-${Math.random()}`;
-                    
-                    // If we haven't seen this ID before, add it
-                    if (!seenFreshIds.has(msgId)) {
-                      msg.id = msgId; // Ensure ID is set
-                      seenFreshIds.add(msgId);
-                      uniqueFreshMessages.push(msg);
-                    }
-                  });
-        
-                  setMessages(uniqueFreshMessages);
-                }
-              } catch (fetchErr) {
-                console.warn('Error fetching group messages:', fetchErr);
-                // Keep using existing filtered messages
-              }
-            }
-        
-            // Mark the group as read when opened
-            if (conversationManager && conversationManager.markGroupAsRead) {
-              conversationManager.markGroupAsRead(group.id);
-            }
-            
-            // Update member count
-            setMemberCount(group.members?.length || 0);
-            
-          } catch (error) {
-            console.error('Error in group message loading flow:', error);
-            // Ensure we have at least an empty array
-            setMessages([]);
-          } finally {
-            setIsLoading(false);
-          }
-        };
-        
-        loadData();
-      
-        // Set up event listener for group updates
-        const handleGroupUpdated = (event) => {
+        // Debounce to prevent multiple rapid refreshes
+        refreshTimeoutRef.current = setTimeout(() => {
           if (event.detail && event.detail.groupId === group?.id) {
             console.log('Group update detected:', event.detail);
-            loadData();
+            loadGroupData();
           } else if (event.type === 'conversationsUpdated') {
             // General conversation update - check if our group is affected
-            setTimeout(() => loadData(), 500);
+            loadGroupData();
           }
-        };
-        
-        // Listen for both specific group updates and general conversation updates
-        window.addEventListener('groupUpdated', handleGroupUpdated);
-        window.addEventListener('conversationsUpdated', handleGroupUpdated);
-        
-        return () => {
-          window.removeEventListener('groupUpdated', handleGroupUpdated);
-          window.removeEventListener('conversationsUpdated', handleGroupUpdated);
-        };
-      }, [group]);
-    // Refresh group data at regular intervals
-    useEffect(() => {
-      if (!group?.id) return;
+        }, 500); // Debounce for 500ms
+      };
       
+      // Listen for both specific group updates and general conversation updates
+      window.addEventListener('groupUpdated', handleGroupUpdated);
+      window.addEventListener('conversationsUpdated', handleGroupUpdated);
+      
+      // Set up a periodic refresh interval - only every 30 seconds
       const refreshInterval = setInterval(() => {
-        // Only refresh if we have a conversationManager and not currently loading
-        if (conversationManager && !isLoading) {
-          conversationManager.refreshGroup(group.id)
-            .then(updatedGroup => {
-              if (updatedGroup && updatedGroup.members?.length !== memberCount) {
-                setMemberCount(updatedGroup.members?.length || 0);
-              }
-            })
-            .catch(err => console.warn('Error refreshing group:', err));
+        // Only refresh if we're not already loading
+        if (!loadingGroupData.current) {
+          loadGroupData();
         }
-      }, 10000); // Check every 10 seconds
+      }, 30000); // Check every 30 seconds
       
-      return () => clearInterval(refreshInterval);
-    }, [group, memberCount, isLoading]);
+      return () => {
+        // Cleanup all event listeners and intervals
+        window.removeEventListener('groupUpdated', handleGroupUpdated);
+        window.removeEventListener('conversationsUpdated', handleGroupUpdated);
+        clearInterval(refreshInterval);
+        
+        if (refreshTimeoutRef.current) {
+          clearTimeout(refreshTimeoutRef.current);
+        }
+      };
+    }, [group?.id]);
 
     // Scroll to bottom when messages change
     useEffect(() => {
         scrollToBottom();
-    }, [messages]);
+    }, [messages.length]);
 
     // Get contact name for a user
     const getContactName = (publicKeyStr) => {
@@ -405,6 +349,7 @@ export default function GroupChat({
                 const updatedMessages = conversationManager.getGroupMessages(group.id);
                 if (Array.isArray(updatedMessages)) {
                     setMessages(updatedMessages);
+                    lastMessageCount.current = updatedMessages.length;
                 }
             } catch (refreshErr) {
                 console.warn('Error refreshing messages after send:', refreshErr);
@@ -416,6 +361,7 @@ export default function GroupChat({
                     timestamp: new Date().toISOString()
                 };
                 setMessages(prev => [...(Array.isArray(prev) ? prev : []), newMessage]);
+                lastMessageCount.current = messages.length + 1;
             }
         } catch (error) {
             console.error('Failed to send message:', error);

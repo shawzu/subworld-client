@@ -1114,9 +1114,7 @@ export default function App() {
               <div className="flex-1 p-6 overflow-y-auto">
                 <div className="max-w-md mx-auto">
                   <div className="flex items-center justify-center mb-8">
-                    <div className="w-24 h-24 rounded-full bg-blue-600 flex items-center justify-center mr-4 text-3xl font-bold">
-                      {publicKey && publicKey[0]?.toUpperCase()}
-                    </div>
+                    
                     <div>
                       <h2 className="text-2xl font-bold text-white">Your Profile</h2>
                       <p className="text-gray-400">End-to-end encrypted</p>
