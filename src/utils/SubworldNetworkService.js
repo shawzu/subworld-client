@@ -12,9 +12,9 @@ class SubworldNetworkService {
 
     // Set default node info with correct ports
     this.defaultNode = {
-      name: 'Default Bootstrap Node',
-      address: 'http://93.4.27.35:8080', // P2P port for node communication
-      apiAddress: 'http://93.4.27.35:8081', // API port for client requests
+      name: 'Bootstrap Node 2',
+      address: 'http://167.71.11.170:8080', // P2P port for node communication
+      apiAddress: 'http://167.71.11.170:8081', // API port for client requests
       isOnline: true, // Assume online by default
       isBootstrap: true
     };
