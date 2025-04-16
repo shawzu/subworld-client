@@ -114,7 +114,7 @@ export default function CreateAccount() {
           transition={{ delay: 0.4, duration: 0.5 }}
           className="space-y-8 bg-gray-800/50 p-8 rounded-2xl backdrop-blur-sm"
         >
-          <h1 className="text-3xl md:text-4xl font-bold text-center text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-600">
+          <h1 className="text-3xl md:text-4xl font-bold text-center text-white">
             Your New Account
           </h1>
           
@@ -127,7 +127,7 @@ export default function CreateAccount() {
             <div className="space-y-6">
               <div>
                 <h2 className="text-xl font-semibold mb-2 flex items-center">
-                  <Shield className="w-5 h-5 mr-2 text-green-500" />
+                  
                   Private Key
                 </h2>
                 <div className="relative">
@@ -195,7 +195,7 @@ export default function CreateAccount() {
           <motion.button
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
-            className="w-full max-w-md mx-auto h-14 text-lg bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white flex items-center justify-center gap-2 rounded-xl transition-all duration-300 shadow-lg"
+            className="w-full max-w-md mx-auto h-14 text-lg bg-white hover:bg-gray-200 text-black flex items-center justify-center gap-2 rounded-2xl shadow-lg transition-colors duration-300"
             onClick={handleStartMessaging}
             disabled={isGenerating}
           >

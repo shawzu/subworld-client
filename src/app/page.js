@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import Image from 'next/image'
 import Landing from './components/landing'
+import { WelcomeGuard } from './components/WelcomeGuard'
 
 export default function Home() {
   const [username, setUsername] = useState('')
@@ -20,7 +21,9 @@ export default function Home() {
 
   return (
     <>
+    <WelcomeGuard/>
     <Landing />
+  
     </>
   )
 }

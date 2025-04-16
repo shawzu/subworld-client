@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation'
 import Image from 'next/image'
 import { motion } from 'framer-motion'
 import { ArrowRight } from 'lucide-react'
+import { WelcomeGuard } from '../components/WelcomeGuard'
 
 export default function Welcome() {
   const router = useRouter()
@@ -15,6 +16,7 @@ export default function Welcome() {
       transition={{ duration: 0.5 }}
       className="min-h-screen bg-[#0E0F14] text-white flex flex-col items-center justify-center p-4 md:p-8"
     >
+      <WelcomeGuard/>
       <div className="w-full max-w-4xl mx-auto space-y-16">
         {/* Logo */}
         <motion.div 

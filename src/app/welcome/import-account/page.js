@@ -6,6 +6,7 @@ import Image from 'next/image'
 import { motion } from 'framer-motion'
 import { Eye, EyeOff, ArrowLeft, Shield, Loader } from 'lucide-react'
 import LocalKeyStorageManager from '../../../utils/LocalKeyStorageManager'
+import { WelcomeGuard } from '@/app/components/WelcomeGuard'
 
 export default function ImportAccount() {
   const router = useRouter()
@@ -47,6 +48,7 @@ export default function ImportAccount() {
       transition={{ duration: 0.5 }}
       className="min-h-screen bg-[#0E0F14] text-white flex flex-col items-center justify-center p-4 md:p-8"
     >
+      <WelcomeGuard/>
       <div className="w-full max-w-2xl mx-auto space-y-12">
         {/* Back Button */}
         <motion.button
@@ -82,7 +84,7 @@ export default function ImportAccount() {
           transition={{ delay: 0.4, duration: 0.5 }}
           className="space-y-8 bg-gray-800/50 p-8 rounded-2xl backdrop-blur-sm"
         >
-          <h1 className="text-3xl md:text-4xl font-bold text-center text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-600">
+          <h1 className="text-3xl md:text-4xl font-bold text-center text-white ">
             Import Your Account
           </h1>
           
@@ -128,7 +130,7 @@ export default function ImportAccount() {
               whileTap={{ scale: 0.95 }}
               onClick={handleImport}
               disabled={isProcessing}
-              className="w-full h-14 text-lg bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white flex items-center justify-center gap-2 rounded-xl transition-all duration-300 shadow-lg disabled:opacity-70"
+              className="w-full h-14 text-lg bg-[#3c5ac6] hover:from-blue-600 hover:to-purple-700 text-white flex items-center justify-center gap-2 rounded-xl transition-all duration-300 shadow-lg disabled:opacity-70"
             >
               {isProcessing ? (
                 <>
@@ -150,7 +152,7 @@ export default function ImportAccount() {
           className="bg-gray-800/30 p-6 rounded-xl text-sm border border-gray-700/50 backdrop-blur-sm"
         >
           <div className="flex items-center space-x-2 mb-3">
-            <Shield className="w-5 h-5 text-green-500" />
+            
             <strong className="text-green-500">Security Notice:</strong>
           </div>
           <p className="text-gray-300">
