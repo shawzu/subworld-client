@@ -20,11 +20,14 @@ class ConversationManager {
     this.callSignalPrefix = "CALL_SIGNAL:";
     this.isProcessingCallMessages = false;
 
+
     // Reference to call service (will be set later)
     this.callService = null;
 
     this.groups = [];
     this.groupMessages = {};
+
+    this.groupReadTimestamps = {};
   }
 
   /**
@@ -85,6 +88,21 @@ class ConversationManager {
   }
 
   /**
+ * Load group read timestamps from localStorage
+ * @private
+ */
+  _loadGroupReadTimestamps() {
+    try {
+      const timestamps = localStorage.getItem('subworld_group_read_timestamps');
+      this.groupReadTimestamps = timestamps ? JSON.parse(timestamps) : {};
+    } catch (error) {
+      console.error('Error loading group read timestamps:', error);
+      this.groupReadTimestamps = {};
+    }
+  }
+
+
+  /**
    * Start periodic fetching of new messages - DISABLED
    */
   startFetchInterval() {
@@ -110,6 +128,8 @@ class ConversationManager {
   getAllConversations() {
     return [...this.conversations]
   }
+
+
 
   /**
    * Get a conversation by contact public key
@@ -354,6 +374,37 @@ class ConversationManager {
       console.error('Error sending message:', error);
       throw error;
     }
+  }
+
+  _calculateGroupUnreadCounts() {
+    if (!Array.isArray(this.groups)) return;
+
+    for (const group of this.groups) {
+      if (!group.id) continue;
+
+      const lastReadTimestamp = this.groupReadTimestamps[group.id] || '1970-01-01T00:00:00.000Z';
+      const lastReadTime = new Date(lastReadTimestamp);
+      let unreadCount = 0;
+
+      // Get messages for this group
+      const messages = this.groupMessages[group.id] || [];
+
+      // Count messages newer than last read timestamp
+      for (const message of messages) {
+        if (message.sender !== this.currentUserKey) { // Don't count our own messages
+          const messageTime = new Date(message.timestamp);
+          if (messageTime > lastReadTime) {
+            unreadCount++;
+          }
+        }
+      }
+
+      // Update group with unread count
+      group.unreadCount = unreadCount;
+    }
+
+    // Persist changes
+    this._persistGroups();
   }
 
   /**
@@ -747,17 +798,44 @@ class ConversationManager {
     return directPreviews;
   }
 
+  /**
+ * Mark a group as read, updating its last read timestamp
+ * @param {string} groupId - The group ID to mark as read
+ */
   markGroupAsRead(groupId) {
     if (!groupId) return;
 
-    // Find the group
+    // Update the last read timestamp to now
+    this.groupReadTimestamps[groupId] = new Date().toISOString();
+
+    // Find the group and update its unreadCount
     const groupIndex = this.groups.findIndex(g => g.id === groupId);
     if (groupIndex >= 0) {
-      // Update the last read timestamp to now
-      this.groups[groupIndex].lastReadTimestamp = new Date().toISOString();
+      this.groups[groupIndex].unreadCount = 0;
       this._persistGroups();
+
+      // Also persist the read timestamps
+      this._persistGroupReadTimestamps();
+    }
+
+    // Force update conversation list to reflect the change
+    this._updateConversationList();
+  }
+
+
+
+  /**
+   * Persist group read timestamps to localStorage
+   * @private
+   */
+  _persistGroupReadTimestamps() {
+    try {
+      localStorage.setItem('subworld_group_read_timestamps', JSON.stringify(this.groupReadTimestamps));
+    } catch (error) {
+      console.error('Error persisting group read timestamps:', error);
     }
   }
+
 
   /**
    * Get the last message in a conversation
@@ -898,8 +976,14 @@ class ConversationManager {
         this.groupMessages = {};
       }
 
+      // Load group read timestamps
+      this._loadGroupReadTimestamps();
+
       // Fetch latest groups from network
       await this.fetchGroups();
+
+      // Calculate unread counts for groups based on read timestamps
+      this._calculateGroupUnreadCounts();
 
       return true;
     } catch (error) {
@@ -907,6 +991,7 @@ class ConversationManager {
       return false;
     }
   }
+
 
   /**
    * Fetch groups from the network
@@ -924,6 +1009,16 @@ class ConversationManager {
       return false;
     }
   }
+
+  /**
+ * Get last read timestamp for a group
+ * @param {string} groupId - The group ID
+ * @returns {string|null} - ISO timestamp string or null if not read
+ */
+  getGroupLastReadTimestamp(groupId) {
+    return this.groupReadTimestamps[groupId] || null;
+  }
+
 
   /**
    * Create a new group
@@ -981,7 +1076,7 @@ class ConversationManager {
 
     try {
       // Call the API directly with the proxy
-      const response = await fetch(`https://proxy.inhouses.xyz/api/bootstrap1/groups/remove_member`, {
+      const response = await fetch(`https://proxy.inhouses.xyz/api/bootstrap2/groups/remove_member`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -1043,7 +1138,7 @@ class ConversationManager {
       };
 
       // Use proxy for the API request
-      const nodeId = this.currentNode.id || 'bootstrap1';
+      const nodeId = this.currentNode.id || 'bootstrap2';
       console.log('Removing member from group via proxy:',
         `${this.proxyBaseUrl}${nodeId}/groups/remove_member`);
 
@@ -1129,7 +1224,7 @@ class ConversationManager {
         ttl: ttlSeconds
       };
 
-   
+
       if (!this.groupMessages[groupId]) {
         this.groupMessages[groupId] = [];
       }
@@ -1216,10 +1311,39 @@ class ConversationManager {
         return new Date(a.timestamp) - new Date(b.timestamp); // Oldest first for displaying
       });
 
+      // Get the last read timestamp for this group
+      const lastReadTimestamp = this.groupReadTimestamps[groupId] || '1970-01-01T00:00:00.000Z';
+      const lastReadTime = new Date(lastReadTimestamp);
+      let unreadCount = 0;
+
+      // Count unread messages (newer than last read timestamp, not from current user)
+      if (Array.isArray(this.groupMessages[groupId])) {
+        for (const message of this.groupMessages[groupId]) {
+          if (message.sender !== this.currentUserKey) {
+            const messageTime = new Date(message.timestamp);
+            if (messageTime > lastReadTime) {
+              unreadCount++;
+            }
+          }
+        }
+      }
+
+      // Update the group's unread count
+      const groupIndex = this.groups.findIndex(g => g.id === groupId);
+      if (groupIndex >= 0) {
+        this.groups[groupIndex].unreadCount = unreadCount;
+        this._persistGroups();
+
+        // Update UI if there are unread messages
+        if (unreadCount > 0) {
+          this._updateConversationList();
+        }
+      }
+
       // Persist changes
       this._persistGroupMessages();
 
-      console.log(`Added ${newMessagesCount} new messages for group ${groupId}`);
+      console.log(`Added ${newMessagesCount} new messages for group ${groupId}, unread: ${unreadCount}`);
 
       return this.groupMessages[groupId];
     } catch (error) {
@@ -1228,7 +1352,6 @@ class ConversationManager {
       return this.groupMessages[groupId] || [];
     }
   }
-
   /**
    * Helper method to update a group's last message time
    * @private
@@ -1567,7 +1690,7 @@ class ConversationManager {
         throw new Error('No network node available');
       }
 
-      const nodeId = currentNode.id || 'bootstrap1';
+      const nodeId = currentNode.id || 'bootstrap2';
       const proxyBaseUrl = 'https://proxy.inhouses.xyz/api/';
       const uploadUrl = `${proxyBaseUrl}${nodeId}/groups/files/upload`;
 
@@ -1660,7 +1783,7 @@ class ConversationManager {
     const validGroups = this.groups.filter(group =>
       group && typeof group === 'object' && group.id);
 
-    // Get previews with consistent IDs
+    // Get previews with consistent IDs and unread counts
     return validGroups.map(group => {
       // Make sure the ID includes the 'group-' prefix for consistency
       let formattedId = group.id;
@@ -1677,7 +1800,7 @@ class ConversationManager {
       );
       const lastMessage = sortedMessages.length > 0 ? sortedMessages[0] : null;
 
-      // Return a clean group preview with consistent ID
+      // Return a clean group preview with consistent ID and unread count
       return {
         id: formattedId, // Use the formatted ID with prefix
         originalId: group.id, // Keep the original ID for reference
@@ -1687,6 +1810,7 @@ class ConversationManager {
         isAdmin: Array.isArray(group.admins) ? group.admins.includes(this.currentUserKey) : false,
         lastMessage: lastMessage ? lastMessage.content : '',
         lastMessageTime: lastMessage ? lastMessage.timestamp : group.created,
+        unreadCount: group.unreadCount || 0, // Include unread count
         avatar: group.avatar || null,
         isGroup: true // Explicitly mark as a group
       };

@@ -229,10 +229,11 @@ export default function App() {
 
   // Initialize app data
   useEffect(() => {
+    // Initialize app data
     const initializeApp = async () => {
       try {
         setIsLoading(true);
-
+  
         // Get user's key pair
         const keyPair = LocalKeyStorageManager.getKeyPair();
         if (!keyPair) {
@@ -240,10 +241,10 @@ export default function App() {
           setIsLoading(false);
           return;
         }
-
+  
         // Set public key for display
         setPublicKey(keyPair.publicKeyDisplay);
-
+  
         try {
           const savedExpiry = localStorage.getItem('subworld_message_expiry');
           if (savedExpiry) {
@@ -260,29 +261,29 @@ export default function App() {
         if (typeof subworldNetwork === 'undefined' || !subworldNetwork) {
           console.error('SubworldNetworkService is undefined');
           setErrorMessage('Network services not available. Loading basic functionality.');
-
+  
           // Load just the conversations without network sync
           const mockConversations = []; // Use your existing mock data here if available
           setConversations(mockConversations);
           setIsLoading(false);
           return;
         }
-
+  
         // Initialize network service
         await subworldNetwork.initialize();
-
+  
         // Get the current node
         const currentNode = subworldNetwork.getCurrentNode();
         setSelectedNode(currentNode);
-
+  
         // Initialize other services (with checks)
         if (conversationManager) {
           await conversationManager.initialize(keyPair.publicKeyDisplay);
-
+  
           // Get conversation previews directly instead of calling loadConversations
           const conversationPreviews = conversationManager.getConversationPreviews();
           setConversations(conversationPreviews);
-
+  
           // Fetch messages on initial load, but don't do automatic fetching
           try {
             await fetchNewMessages();
@@ -292,7 +293,7 @@ export default function App() {
         } else {
           setConversations([]); // Empty fallback
         }
-
+  
         // Load groups if available
         if (conversationManager) {
           try {
@@ -309,16 +310,117 @@ export default function App() {
         setIsLoading(false);
       }
     };
-
+  
     initializeApp();
-
+  
+    // Set up periodic message fetching with smart intervals
+    const setupMessageFetching = () => {
+      // Start with a reasonable interval
+      let fetchInterval = 30000; // 30 seconds
+      let lastNewMessageTime = 0;
+      let consecutiveEmptyFetches = 0;
+      let smartFetchTimeout = null;
+      
+      const smartFetch = async () => {
+        try {
+          // Skip if network service or conversation manager aren't available
+          if (!subworldNetwork || !conversationManager) return;
+          
+          console.log('Smart fetch running');
+          
+          // Perform the fetch
+          const newMessageCount = await fetchNewMessages();
+          console.log(`Smart fetch found ${newMessageCount} new messages`);
+          
+          // Adaptive interval based on message activity
+          if (newMessageCount > 0) {
+            // Messages found - shorten interval to be more responsive
+            lastNewMessageTime = Date.now();
+            consecutiveEmptyFetches = 0;
+            fetchInterval = 15000; // 15 seconds when actively receiving messages
+          } else {
+            consecutiveEmptyFetches++;
+            
+            // If we've done several empty fetches, gradually increase the interval
+            // to save battery and reduce network requests
+            if (consecutiveEmptyFetches > 3) {
+              // Calculate how long it's been since the last new message
+              const timeSinceLastMessage = Date.now() - lastNewMessageTime;
+              
+              if (timeSinceLastMessage > 5 * 60 * 1000) {
+                // No new messages for 5+ minutes, fetch less frequently
+                fetchInterval = 2 * 60 * 1000; // 2 minutes
+              } else if (timeSinceLastMessage > 2 * 60 * 1000) {
+                // No new messages for 2+ minutes
+                fetchInterval = 60 * 1000; // 1 minute
+              } else {
+                // Default interval
+                fetchInterval = 30000; // 30 seconds
+              }
+            }
+          }
+          
+          // Schedule next fetch with the adaptive interval
+          smartFetchTimeout = setTimeout(smartFetch, fetchInterval);
+        } catch (error) {
+          console.error('Error in smart fetch:', error);
+          // If there's an error, retry after a delay
+          smartFetchTimeout = setTimeout(smartFetch, 60000); // 1 minute
+        }
+      };
+      
+      // Initial fetch soon after startup
+      smartFetchTimeout = setTimeout(smartFetch, 5000);
+      
+      // Return cleanup function
+      return () => {
+        if (smartFetchTimeout) clearTimeout(smartFetchTimeout);
+      };
+    };
+    
+    // Set up the smart fetching system
+    const cleanupFetching = setupMessageFetching();
+    
+    // Set up network status monitoring for optimized fetching
+    const setupNetworkMonitoring = () => {
+      const handleOnline = () => {
+        console.log('Network connection restored, fetching messages...');
+        // When we come back online, immediately fetch messages
+        fetchNewMessages();
+      };
+      
+      const handleVisibilityChange = () => {
+        if (document.visibilityState === 'visible') {
+          console.log('Tab became visible, fetching messages...');
+          // When tab becomes visible, fetch messages
+          fetchNewMessages();
+        }
+      };
+      
+      // Add event listeners
+      window.addEventListener('online', handleOnline);
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+      
+      // Return cleanup function
+      return () => {
+        window.removeEventListener('online', handleOnline);
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+      };
+    };
+  
+    // Set up network monitoring
+    const cleanupNetworkMonitoring = setupNetworkMonitoring();
+  
     // Clean up on unmount
     return () => {
       if (conversationManager && conversationManager.cleanup) {
         conversationManager.cleanup();
       }
+      
+      if (cleanupFetching) cleanupFetching();
+      if (cleanupNetworkMonitoring) cleanupNetworkMonitoring();
     }
-  }, [])
+  }, []);
 
   // Modified fetchNewMessages function with rate limiting
   const fetchNewMessages = async () => {

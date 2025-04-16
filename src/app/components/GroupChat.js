@@ -129,29 +129,122 @@ export default function GroupChat({
 
     // Load messages and set up refresh listeners when group changes
     useEffect(() => {
-      loadGroupData();
-      
-      // Set up event listener for group updates
-      const handleGroupUpdated = (event) => {
-        if (event.detail && event.detail.groupId === group?.id) {
-          console.log('Group update detected:', event.detail);
-          loadGroupData();
-        } else if (event.type === 'conversationsUpdated') {
-          // General conversation update - check if our group is affected
-          setTimeout(() => loadGroupData(), 500);
+        if (!group || !group.id) {
+          setMessages([]);
+          setIsLoading(false);
+          return;
         }
-      };
       
-      // Listen for both specific group updates and general conversation updates
-      window.addEventListener('groupUpdated', handleGroupUpdated);
-      window.addEventListener('conversationsUpdated', handleGroupUpdated);
+        setIsLoading(true);
+        const loadData = async () => {
+          try {
+            // Initialize with empty array
+            let existingMessages = [];
+        
+            // Try to get existing messages
+            if (conversationManager) {
+              try {
+                const groupMsgs = conversationManager.getGroupMessages(group.id);
+                if (Array.isArray(groupMsgs)) {
+                  existingMessages = groupMsgs;
+                }
+              } catch (err) {
+                console.warn('Could not load existing group messages:', err);
+              }
+            }
+        
+            // Filter out duplicate messages
+            const uniqueMessages = [];
+            const seenIds = new Set();
+        
+            // Filter out duplicate messages by ID
+            existingMessages.forEach(msg => {
+              // Ensure each message has an ID
+              const msgId = msg.id || `gen-${Date.now()}-${Math.random()}`;
+              
+              // If we haven't seen this ID before, add it
+              if (!seenIds.has(msgId)) {
+                msg.id = msgId; // Ensure ID is set
+                seenIds.add(msgId);
+                uniqueMessages.push(msg);
+              }
+            });
+        
+            // Set the filtered messages
+            setMessages(uniqueMessages);
+        
+            // Try to fetch new messages
+            if (conversationManager) {
+              try {
+                await conversationManager.fetchGroupMessages(group.id);
+        
+                // Update with fresh messages and filter duplicates again
+                const freshMsgs = conversationManager.getGroupMessages(group.id);
+                if (Array.isArray(freshMsgs)) {
+                  // Clear the previous sets for a fresh filtering
+                  const uniqueFreshMessages = [];
+                  const seenFreshIds = new Set();
+        
+                  // Filter out duplicate messages by ID
+                  freshMsgs.forEach(msg => {
+                    // Ensure each message has an ID
+                    const msgId = msg.id || `gen-${Date.now()}-${Math.random()}`;
+                    
+                    // If we haven't seen this ID before, add it
+                    if (!seenFreshIds.has(msgId)) {
+                      msg.id = msgId; // Ensure ID is set
+                      seenFreshIds.add(msgId);
+                      uniqueFreshMessages.push(msg);
+                    }
+                  });
+        
+                  setMessages(uniqueFreshMessages);
+                }
+              } catch (fetchErr) {
+                console.warn('Error fetching group messages:', fetchErr);
+                // Keep using existing filtered messages
+              }
+            }
+        
+            // Mark the group as read when opened
+            if (conversationManager && conversationManager.markGroupAsRead) {
+              conversationManager.markGroupAsRead(group.id);
+            }
+            
+            // Update member count
+            setMemberCount(group.members?.length || 0);
+            
+          } catch (error) {
+            console.error('Error in group message loading flow:', error);
+            // Ensure we have at least an empty array
+            setMessages([]);
+          } finally {
+            setIsLoading(false);
+          }
+        };
+        
+        loadData();
       
-      return () => {
-        window.removeEventListener('groupUpdated', handleGroupUpdated);
-        window.removeEventListener('conversationsUpdated', handleGroupUpdated);
-      };
-    }, [group]);
-
+        // Set up event listener for group updates
+        const handleGroupUpdated = (event) => {
+          if (event.detail && event.detail.groupId === group?.id) {
+            console.log('Group update detected:', event.detail);
+            loadData();
+          } else if (event.type === 'conversationsUpdated') {
+            // General conversation update - check if our group is affected
+            setTimeout(() => loadData(), 500);
+          }
+        };
+        
+        // Listen for both specific group updates and general conversation updates
+        window.addEventListener('groupUpdated', handleGroupUpdated);
+        window.addEventListener('conversationsUpdated', handleGroupUpdated);
+        
+        return () => {
+          window.removeEventListener('groupUpdated', handleGroupUpdated);
+          window.removeEventListener('conversationsUpdated', handleGroupUpdated);
+        };
+      }, [group]);
     // Refresh group data at regular intervals
     useEffect(() => {
       if (!group?.id) return;

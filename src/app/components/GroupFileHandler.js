@@ -38,7 +38,7 @@ export const uploadGroupFile = async (groupId, file, senderPublicKey) => {
       throw new Error('No network node selected');
     }
     
-    const nodeId = node.id || 'bootstrap1';
+    const nodeId = node.id || 'bootstrap2';
     const proxyUrl = `https://proxy.inhouses.xyz/api/${nodeId}/groups/files/upload`;
     
     console.log(`Uploading to: ${proxyUrl}`);
@@ -111,7 +111,7 @@ export const downloadGroupFile = async (groupId, fileId, fileName, userPublicKey
       throw new Error('No network node selected');
     }
     
-    const nodeId = node.id || 'bootstrap1';
+    const nodeId = node.id || 'bootstrap2';
     
     // First get the file metadata
     const metadataUrl = `https://proxy.inhouses.xyz/api/${nodeId}/groups/files/get?user_id=${encodeURIComponent(userPublicKey)}&group_id=${encodeURIComponent(groupId)}&file_id=${encodeURIComponent(fileId)}`;

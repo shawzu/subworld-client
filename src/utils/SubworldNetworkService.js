@@ -12,7 +12,7 @@ class SubworldNetworkService {
 
     // Set default node info with correct ports
     this.defaultNode = {
-      name: 'Bootstrap Node 2',
+      name: 'BootstrapNode2',
       address: 'http://167.71.11.170:8080', // P2P port for node communication
       apiAddress: 'http://167.71.11.170:8081', // API port for client requests
       isOnline: true, // Assume online by default
@@ -114,7 +114,7 @@ class SubworldNetworkService {
 
       // Check if it's the current node
       if (this.currentNode && this.currentNode.address === nodeAddress) {
-        nodeId = this.currentNode.id || 'bootstrap1';
+        nodeId = this.currentNode.id || 'bootstrap2';
       } else {
         // Try to find it in the available nodes
         if (this.availableNodesCache) {
@@ -168,7 +168,7 @@ class SubworldNetworkService {
       // Only perform a health check if explicitly enabled, but use proxy-based method
       if (!this.disableHealthChecks) {
         try {
-          const nodeId = updatedNode.id || 'bootstrap1';
+          const nodeId = updatedNode.id || 'bootstrap2';
           const healthResult = await this.checkNodeHealthViaProxy(nodeId);
           updatedNode.isOnline = healthResult.isOnline;
           updatedNode.latency = healthResult.latency;
@@ -243,13 +243,13 @@ class SubworldNetworkService {
 
       const defaultNodes = [
         {
-          id: 'bootstrap1',
-          name: 'Bootstrap Node',
-          address: 'http://93.4.27.35:8080', // P2P port
-          apiAddress: 'http://93.4.27.35:8081', // API port
+          id: 'bootstrap2',
+          name: 'BootstrapNode2',
+          address: 'http://167.71.11.170:8080', // P2P port
+          apiAddress: 'http://167.71.11.170:8081', // API port
           isBootstrap: true,
           isOnline: true,
-          description: 'Primary bootstrap node (93.4.27.35)'
+          description: 'Secondary bootstrap node (167.71.11.170)'
         }
       ];
 
@@ -327,13 +327,13 @@ class SubworldNetworkService {
       // Always return bootstrap node as fallback
       const fallbackNodes = [
         {
-          id: 'bootstrap1',
-          name: 'Bootstrap Node',
-          address: 'http://93.4.27.35:8080', // P2P port
-          apiAddress: 'http://93.4.27.35:8081', // API port
+          id: 'bootstrap2',
+          name: 'BootstrapNode2',
+          address: 'http://167.71.11.170:8080', // P2P port
+          apiAddress: 'http://167.71.11.170:8081', // API port
           isBootstrap: true,
           isOnline: true,
-          description: 'Primary bootstrap node (93.4.27.35)'
+          description: 'Primary bootstrap node (167.71.11.170)'
         }
       ];
 
@@ -398,7 +398,7 @@ class SubworldNetworkService {
       }
 
       // Use proxy instead of direct node connection
-      const nodeId = this.currentNode.id || 'bootstrap1';
+      const nodeId = this.currentNode.id || 'bootstrap2';
 
       console.log('Sending message via proxy:', `${this.proxyBaseUrl}${nodeId}/messages/send`);
 
@@ -447,7 +447,7 @@ class SubworldNetworkService {
       }
 
       // Use proxy instead of direct node connection
-      const nodeId = this.currentNode.id || 'bootstrap1';
+      const nodeId = this.currentNode.id || 'bootstrap2';
 
       console.log('Fetching messages for user:', this.keyPair.publicKeyDisplay);
 
@@ -626,7 +626,7 @@ class SubworldNetworkService {
       }
 
       // Use proxy instead of direct node connection
-      const nodeId = this.currentNode.id || 'bootstrap1';
+      const nodeId = this.currentNode.id || 'bootstrap2';
 
       console.log(`Marking ${messageIDs.length} messages as delivered for user ${userID}`);
 
@@ -675,7 +675,7 @@ class SubworldNetworkService {
       }
 
       // Use the proxy instead of direct node connection
-      const nodeId = this.currentNode.id || 'bootstrap1';
+      const nodeId = this.currentNode.id || 'bootstrap2';
       const endpoint = `${this.proxyBaseUrl}${nodeId}/node/info`;
 
       console.log('Fetching node info via proxy:', endpoint);
@@ -773,7 +773,7 @@ class SubworldNetworkService {
       formData.append('content_id', contentId);
 
       // Use proxy instead of direct node connection
-      const nodeId = this.currentNode.id || 'bootstrap1';
+      const nodeId = this.currentNode.id || 'bootstrap2';
       console.log(`Uploading encrypted file via proxy: ${this.proxyBaseUrl}${nodeId}/files/upload`);
 
       // Upload the encrypted file
@@ -846,7 +846,7 @@ class SubworldNetworkService {
       }
 
       // Fix: Define nodeId from currentNode
-      const nodeId = this.currentNode.id || 'bootstrap1';
+      const nodeId = this.currentNode.id || 'bootstrap2';
 
       const endpoint = `${this.proxyBaseUrl}${nodeId}/files/get?user_id=${encodeURIComponent(userID)}&file_id=${encodeURIComponent(fileID)}`;
 
@@ -882,7 +882,7 @@ class SubworldNetworkService {
       }
 
       // Use proxy instead of direct node connection
-      const nodeId = this.currentNode.id || 'bootstrap1';
+      const nodeId = this.currentNode.id || 'bootstrap2';
       const endpoint = `${this.proxyBaseUrl}${nodeId}/files/get?user_id=${encodeURIComponent(userID)}&file_id=${encodeURIComponent(fileID)}&chunk=0`;
 
       console.log('Downloading encrypted file:', endpoint);
@@ -970,7 +970,7 @@ class SubworldNetworkService {
       }
 
       // Use proxy for voice endpoints
-      const nodeId = this.currentNode.id || 'bootstrap1';
+      const nodeId = this.currentNode.id || 'bootstrap2';
       const url = `${this.proxyBaseUrl}${nodeId}/${endpoint}`;
 
       console.log(`Making API request to: ${url}`);
@@ -1017,7 +1017,7 @@ class SubworldNetworkService {
       };
 
       // Use proxy for the API request
-      const nodeId = this.currentNode.id || 'bootstrap1';
+      const nodeId = this.currentNode.id || 'bootstrap2';
       console.log('Creating group via proxy:', `${this.proxyBaseUrl}${nodeId}/groups/create`);
 
       // Send the request
@@ -1055,7 +1055,7 @@ class SubworldNetworkService {
       }
 
       // Use proxy for the API request
-      const nodeId = this.currentNode.id || 'bootstrap1';
+      const nodeId = this.currentNode.id || 'bootstrap2';
       console.log('Fetching group via proxy:', `${this.proxyBaseUrl}${nodeId}/groups/get?group_id=${groupId}`);
 
       const response = await fetch(`${this.proxyBaseUrl}${nodeId}/groups/get?group_id=${groupId}`);
@@ -1081,7 +1081,7 @@ class SubworldNetworkService {
       }
 
       // Use proxy for the API request
-      const nodeId = this.currentNode.id || 'bootstrap1';
+      const nodeId = this.currentNode.id || 'bootstrap2';
       const userId = this.keyPair.publicKeyDisplay;
       console.log('Fetching user groups via proxy:', `${this.proxyBaseUrl}${nodeId}/groups/list?user_id=${userId}`);
 
@@ -1114,7 +1114,7 @@ class SubworldNetworkService {
       };
 
       // Use proxy for the API request
-      const nodeId = this.currentNode.id || 'bootstrap1';
+      const nodeId = this.currentNode.id || 'bootstrap2';
       console.log('Joining group via proxy:', `${this.proxyBaseUrl}${nodeId}/groups/join`);
 
       const response = await fetch(`${this.proxyBaseUrl}${nodeId}/groups/join`, {
@@ -1152,7 +1152,7 @@ class SubworldNetworkService {
       };
 
       // Use proxy for the API request
-      const nodeId = this.currentNode.id || 'bootstrap1';
+      const nodeId = this.currentNode.id || 'bootstrap2';
       console.log('Leaving group via proxy:', `${this.proxyBaseUrl}${nodeId}/groups/leave`);
 
       const response = await fetch(`${this.proxyBaseUrl}${nodeId}/groups/leave`, {
@@ -1184,7 +1184,7 @@ class SubworldNetworkService {
       }
 
       // Use proxy for the API request
-      const nodeId = this.currentNode.id || 'bootstrap1';
+      const nodeId = this.currentNode.id || 'bootstrap2';
       console.log('Fetching group members via proxy:', `${this.proxyBaseUrl}${nodeId}/groups/members?group_id=${groupId}`);
 
       const response = await fetch(`${this.proxyBaseUrl}${nodeId}/groups/members?group_id=${groupId}`);
@@ -1230,7 +1230,7 @@ class SubworldNetworkService {
       }
 
       // Use proxy for the API request
-      const nodeId = this.currentNode.id || 'bootstrap1';
+      const nodeId = this.currentNode.id || 'bootstrap2';
       console.log('Sending group message via proxy:', `${this.proxyBaseUrl}${nodeId}/groups/messages/send`);
 
       const response = await fetch(`${this.proxyBaseUrl}${nodeId}/groups/messages/send`, {
@@ -1266,7 +1266,7 @@ class SubworldNetworkService {
       }
 
       // Use proxy for the API request
-      const nodeId = this.currentNode.id || 'bootstrap1';
+      const nodeId = this.currentNode.id || 'bootstrap2';
       const userId = this.keyPair.publicKeyDisplay;
       console.log('Fetching group messages via proxy:', `${this.proxyBaseUrl}${nodeId}/groups/messages/get?group_id=${groupId}&user_id=${userId}`);
 
@@ -1402,7 +1402,7 @@ class SubworldNetworkService {
       };
 
 
-      const nodeId = this.currentNode.id || 'bootstrap1';
+      const nodeId = this.currentNode.id || 'bootstrap2';
       console.log('Adding member to group via proxy:', `${this.proxyBaseUrl}${nodeId}/groups/add_member`);
 
 

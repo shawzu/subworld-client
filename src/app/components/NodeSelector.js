@@ -50,13 +50,13 @@ export default function NodeSelector({ onNodeSelect, currentNode }) {
       // Fallback to default network nodes if fetch fails
       setNodes([
         { 
-          id: 'bootstrap1', 
-          name: 'Bootstrap Node', 
-          address: 'http://93.4.27.35:8080', // P2P port
-          apiAddress: 'http://93.4.27.35:8081', // API port
+          id: 'bootstrap2', 
+          name: 'BootstrapNode2', 
+          address: 'http://167.71.11.170:8080', // P2P port
+          apiAddress: 'http://167.71.11.170:8081', // API port
           isOnline: true,
           isBootstrap: true,
-          description: 'Primary bootstrap node (93.4.27.35)'
+          description: 'Secondary bootstrap node (167.71.11.170)'
         },
         ...(currentNode && !currentNode.address.includes('localhost') ? [{
           id: 'current',
